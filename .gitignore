@@ -1,0 +1,9 @@
+node_modules/
+dist/
+plugin/dist/
+coverage/
+*.log
+.DS_Store
+
+# baton local caches (never committed; see docs/design/context-format.md)
+.context/.cache/

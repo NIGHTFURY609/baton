@@ -1,0 +1,12 @@
+{
+  "name": "baton-dev",
+  "owner": { "name": "baton maintainers" },
+  "description": "Local development marketplace for the baton plugin.",
+  "plugins": [
+    {
+      "name": "baton",
+      "source": "./plugin",
+      "description": "Continuity layer for coding agents."
+    }
+  ]
+}

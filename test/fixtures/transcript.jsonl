@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","message":{"role":"user","content":"start"}}
+{"type":"assistant","uuid":"a1","requestId":"req_1","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":500,"output_tokens":40}}}
+{"type":"assistant","uuid":"a2","requestId":"req_1","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":500,"output_tokens":40}}}
+not json at all
+{"type":"attachment","uuid":"x"}
+{"type":"assistant","uuid":"a3","requestId":"req_2","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":1500,"output_tokens":10}}}

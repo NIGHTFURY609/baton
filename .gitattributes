@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+
+# baton task store: union-merge, baton collapses duplicate ids (ADR 0009)
+.context/tasks.jsonl merge=union
+.context/memories.jsonl merge=union

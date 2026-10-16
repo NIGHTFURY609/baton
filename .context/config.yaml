@@ -1,0 +1,27 @@
+# baton configuration. Every key is optional; defaults live in src/core/config.ts.
+version: 1
+
+packet:
+  maxChars: 9000   # Claude Code caps SessionStart context at 10,000 chars (ADR 0004)
+  maxTasks: 3
+
+freshness:
+  staleAfter:      # commits touching source_paths before a section is stale; null = never by commits
+    rule: 5
+    state: 3
+    knowledge: 10
+    intent: 20
+    decision: null
+
+tasks:
+  backend: native  # native | beads | claude-tasks | none  (ADR 0009)
+  prefix: bt       # task ids look like bt-a3f
+
+verify:
+  requireDiff: true
+
+guards:
+  protectState: true
+  preflightPaths:
+    - package.json
+    - package-lock.json
