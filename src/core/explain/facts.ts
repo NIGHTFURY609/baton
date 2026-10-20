@@ -55,6 +55,9 @@ const LABEL_ORDER: FactLabel[] = [
   "import",
 ];
 
+/** The heading syntax `parseSections` uses to close a section (fence-unaware, like the parser). */
+const HEADING_LINE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"]);
 
 export async function collectFacts(
@@ -296,7 +299,8 @@ class Collector {
         if (s.file !== target.source || s.line > target.line) continue;
         if (!best || s.line > best.line) best = s;
       }
-      return best ? [await this.sectionFact(best, this.isDecision(best))] : [];
+      if (!best || !(await this.spanReaches(best, target.line))) return [];
+      return [await this.sectionFact(best, this.isDecision(best))];
     }
     const lines = await this.lines(target.source);
     if (!lines) return [];
@@ -306,6 +310,25 @@ class Collector {
       if (!best || t.line > best.line) best = t;
     }
     return best ? docFact(best.source, best.line, best.body) : [];
+  }
+
+  /**
+   * Whether `section` still covers `line`. A marked section in a multi-section
+   * file ends at the next heading of the same or higher level (marked or not),
+   * so a diagram under a later unmarked heading is not part of it. Whole-file
+   * sections (no heading at their line) cover the entire file.
+   */
+  private async spanReaches(section: Section, line: number): Promise<boolean> {
+    const lines = await this.lines(section.file);
+    if (!lines) return false;
+    const own = HEADING_LINE.exec(lines[section.line - 1] ?? "");
+    if (!own) return true;
+    const level = (own[1] ?? "#").length;
+    for (let i = section.line; i < line - 1; i++) {
+      const h = HEADING_LINE.exec(lines[i] ?? "");
+      if (h && (h[1] ?? "#").length <= level) return false;
+    }
+    return true;
   }
 
   // ------------------------------------------------------------------ shared

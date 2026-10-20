@@ -176,13 +176,15 @@ describe("collectFacts", () => {
         "",
         "```mermaid",
         "flowchart LR",
-        "  Cart --> Invoice",
+        // `Invoice` sits inside {} so it is not a whole token in the section text:
+        // only the enclosing-section rule can attach this section.
+        "  C[Cart] --> I{Invoice}",
         "```",
         "",
       ].join("\n"),
     });
     const index = await buildIndex(root);
-    const { facts } = await collectFacts(
+    const { facts, noRecordedReason } = await collectFacts(
       index,
       [pick(index, "mermaid", "Invoice")],
       defaultConfig(),
@@ -192,6 +194,38 @@ describe("collectFacts", () => {
     expect(own?.text).toContain("Invoices flow like this.");
     expect(own?.provenance).toBe("unverified");
     expect(facts.some((f) => f.source === ".context/spec.md:3")).toBe(false);
+    expect(noRecordedReason).toBe(false);
+  });
+
+  it("does not attach a section to a diagram under a later unmarked heading", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Authentication",
+        '<!-- baton: {id: auth, kind: intent, verified_at: null, source_paths: ["src/a/**"]} -->',
+        "",
+        "Users sign in with passkeys.",
+        "",
+        "## Appendix",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  P{Payment} --> Q{Queue}",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts, noRecordedReason } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Payment")],
+      defaultConfig(),
+    );
+    expect(facts.some((f) => f.label === "section" || f.label === "decision")).toBe(false);
+    expect(facts.some((f) => f.label === "doc")).toBe(false);
+    expect(noRecordedReason).toBe(true);
   });
 
   it("lists at most MAX_LISTED source files and counts the rest", async () => {
