@@ -294,7 +294,7 @@ function sectionTarget(section: Section): Target {
 
 // ---------------------------------------------------------------- markdown
 
-interface Fence {
+export interface Fence {
   /** Line index of the opening fence. */
   open: number;
   /** Line index of the closing fence (last line when unclosed). */
@@ -302,7 +302,7 @@ interface Fence {
   info: string;
 }
 
-function findFences(lines: string[]): Fence[] {
+export function findFences(lines: string[]): Fence[] {
   const fences: Fence[] = [];
   let open: { index: number; char: string; size: number; info: string } | null = null;
   lines.forEach((line, i) => {
