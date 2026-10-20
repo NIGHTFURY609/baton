@@ -35,6 +35,7 @@ Sources: [manifest reference](https://code.claude.com/docs/en/plugins/manifest-r
 
 - Layout: `.claude-plugin/plugin.json` (only `name` required, kebab-case), `skills/<name>/SKILL.md`, `hooks/hooks.json` (same shape as the settings `hooks` object), `.mcp.json`, `bin/` (added to the Bash tool's PATH; claude.ai/Cowork will not install plugins that ship `bin/`). ✅
 - A `CLAUDE.md` at the plugin root is **not** loaded. ✅
+- Plugin skills are invoked as `/plugin-name:skill-name`. A plugin skill whose frontmatter `name` is set is also invocable bare unless another command uses that name ([skills docs](https://code.claude.com/docs/en/skills)). ✅ Bare `/baton` for a skill whose `name` equals its folder name: 🟡 confirm in Task 8.
 - Marketplace: `.claude-plugin/marketplace.json` with `name`, `owner`, `plugins[{name, source: "./plugin"}]`. ✅
 - Local testing: `claude --plugin-dir ./plugin`, `claude plugin validate ./plugin [--strict]`, or `/plugin marketplace add ./` then `/plugin install baton@baton-dev`. ✅
 

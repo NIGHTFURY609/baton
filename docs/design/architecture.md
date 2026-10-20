@@ -31,6 +31,7 @@ src/
     glob.ts           tiny glob matcher for source_paths and guards
     transcript.ts     Claude Code JSONL reader, usage de-duplication
     decisions.ts      MADR naming and numbering
+    explain/          `baton explain`: target resolution, fact collection, voice templates (ADR 0010)
     tasks/            TaskStore interface + backends
       native/         default store ported from Beads: model, ids, jsonl, db (node:sqlite), service
       beads.ts        optional adapter over an installed `bd`
@@ -62,6 +63,7 @@ templates/context/    what `baton init` scaffolds into a project
 | `task create\|list\|show\|ready\|blocked\|update\|close\|reopen\|delete\|dep\|comment\|import` | `.context/tasks.jsonl` (via cache) | `.context/tasks.jsonl` | 0, 1, 2 on refused state change (claimed, blocked, cycle) | done |
 | `remember \| recall \| forget \| memories` | `.context/memories.jsonl` | `.context/memories.jsonl` | 0, 1 | done |
 | `hook <event> [--harness]` | stdin JSON | per handler | 0 always, except structured denies | 1–2 |
+| explain <thing> [--as] [--format] · explain -c/-p/-s/--force · --delete · --templates | .context/, docs/, package.json, git file list, templates | .context/explain/, ~/.baton/explain/ (create/delete only) | 0, 1, 2 on tie or refused template change | side track |
 | `mcp` | — | — (delegates to core) | — | 3 |
 
 Exit codes: `0` ok · `1` error · `2` check failed / blocked · `3` not implemented yet (`src/core/errors.ts`).

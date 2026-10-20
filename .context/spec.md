@@ -12,9 +12,9 @@ Success is measured, not asserted: ≥ 30% fewer tokens at session start and few
 ## Scope and non-goals
 <!-- baton: {id: scope, kind: intent, verified_at: null, source_paths: []} -->
 
-In scope: section-level freshness, the budgeted mission packet, hook-generated handoffs, lifecycle rules for state docs, honest stats.
+In scope: section-level freshness, the budgeted mission packet, hook-generated handoffs, lifecycle rules for state docs, honest stats, on-demand explanations of one project element in a chosen voice (`explain`, ADR 0010).
 
-Not in scope (load-bearing): spec or plan authoring beyond `/init-spec` (superpowers and Spec Kit are upstream); a full project tracker (no Dolt, sync server, UI, molecules or gates; baton ships only the minimal task store of ADR 0009); rules-file sync engines (rulesync-class tools); output-style compression (caveman-style); a server that owns state; a hand-maintained mindmap.
+Not in scope (load-bearing): spec or plan authoring beyond `/init-spec` (superpowers and Spec Kit are upstream); a full project tracker (no Dolt, sync server, UI, molecules or gates; baton ships only the minimal task store of ADR 0009); rules-file sync engines (rulesync-class tools); always-on output-style compression (caveman-style token savers; on-demand explain voices are in scope, ADR 0010); a server that owns state; a hand-maintained mindmap.
 
 ## Context format
 <!-- baton: {id: context-format, kind: intent, verified_at: null, source_paths: ["src/core/frontmatter.ts", "src/core/paths.ts", "templates/**"]} -->
@@ -44,7 +44,7 @@ Hooks are the enforcement layer; the MCP is only an adapter. Hooks fail open, us
 ## Skills
 <!-- baton: {id: skills, kind: intent, verified_at: null, source_paths: ["plugin/skills/**"]} -->
 
-Thin procedures that call the CLI and carry the taxonomy and lifecycle rules: `/init-spec`, `/checkpoint`, `/handoff`, `/decide`, `/doc-audit`. Spec-only frontmatter so they load in every Agent Skills harness.
+Thin procedures that call the CLI and carry the taxonomy and lifecycle rules: `/init-spec`, `/checkpoint`, `/handoff`, `/decide`, `/doc-audit`, `/baton` (routes `/baton <args>` to the CLI or to the matching skill, ADR 0010). Spec-only frontmatter so they load in every Agent Skills harness.
 
 ## Tasks
 <!-- baton: {id: tasks, kind: intent, verified_at: null, source_paths: ["src/core/tasks/**", "src/commands/task.ts"]} -->

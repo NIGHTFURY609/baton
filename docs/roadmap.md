@@ -39,10 +39,14 @@ Uses existing tools only; costs nothing to build. Record tokens at session start
 - Publish to npm as `baton-ctx`; plugin marketplace entry
 - Paired A/B benchmark and harness published
 
+## Side track · explain (outside the phase gates)
+
+`baton explain` returns facts and a voice template for one project element, and a `/baton` router skill mirrors the CLI in agents. Spec: [explain design](superpowers/specs/2026-10-20-explain-design.md); epic `bt-8ao` (`baton task show bt-8ao`).
+
 ## Open questions
 
 1. What N (commits) marks a section stale, per kind? Defaults are guesses in `config.yaml`.
 2. Does the packet need spec sections at all, or do ADR summaries plus task descriptions carry enough intent?
 3. Is `search` in the MCP adapter worth its tool-definition tokens, or does Grep on `.context/` suffice?
 4. Should `verify` require a non-empty diff by default?
-5. How do skills call the CLI: global install, `npx baton-ctx`, or a plugin `bin/` shim (which claude.ai/Cowork will not install)?
+5. How do skills call the CLI: global install, `npx baton-ctx`, or a plugin `bin/` shim (which claude.ai/Cowork will not install)? Resolved: global install (ADR 0011).
