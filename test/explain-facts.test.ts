@@ -129,6 +129,89 @@ describe("collectFacts", () => {
     expect(node.facts.find((f) => f.label === "doc")?.text).toContain("Hooks fail open.");
   });
 
+  it("finds the enclosing heading for a diagram outside docs/", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      "README.md": [
+        "# Project",
+        "",
+        "## Flow",
+        "",
+        "Requests go left to right.",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  Client --> Server",
+        "```",
+        "",
+      ].join("\r\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Server")],
+      defaultConfig(),
+    );
+    const doc = facts.find((f) => f.label === "doc");
+    expect(doc?.source).toBe("README.md:3");
+    expect(doc?.text).toContain("Requests go left to right.");
+    expect(doc?.provenance).toBe("no provenance");
+  });
+
+  it("gives a diagram inside .context/ its enclosing section, not a doc fact", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Authentication",
+        '<!-- baton: {id: auth, kind: intent, verified_at: null, source_paths: ["src/a/**"]} -->',
+        "",
+        "Users sign in with passkeys.",
+        "",
+        "## Billing",
+        '<!-- baton: {id: billing, kind: intent, verified_at: null, source_paths: ["src/b/**"]} -->',
+        "",
+        "Invoices flow like this.",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  Cart --> Invoice",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Invoice")],
+      defaultConfig(),
+    );
+    expect(facts.some((f) => f.label === "doc")).toBe(false);
+    const own = facts.find((f) => f.label === "section" && f.source === ".context/spec.md:8");
+    expect(own?.text).toContain("Invoices flow like this.");
+    expect(own?.provenance).toBe("unverified");
+    expect(facts.some((f) => f.source === ".context/spec.md:3")).toBe(false);
+  });
+
+  it("lists at most MAX_LISTED source files and counts the rest", async () => {
+    const root = await makeFixture();
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 14; i++) files[`src/a/f${String(i).padStart(2, "0")}.ts`] = "export {};\n";
+    await writeFiles(root, files);
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "section", "Authentication")],
+      defaultConfig(),
+    );
+    const source = facts.find((f) => f.label === "source");
+    // src/a/index.ts + 14 new files = 15 matches
+    expect(source?.text.endsWith(" (+5 more)")).toBe(true);
+    const listed = source?.text.replace(/ \(\+5 more\)$/, "").split(", ");
+    expect(listed).toHaveLength(MAX_LISTED);
+  });
+
   it("matches mentions case-insensitively on whole tokens only", async () => {
     const root = await makeFixture();
     await writeFiles(root, {

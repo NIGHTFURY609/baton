@@ -1,11 +1,11 @@
-import { readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname } from "node:path";
 import type { Config } from "../config.js";
 import { classifyFreshness } from "../freshness.js";
 import { commitsTouching } from "../git.js";
 import { matchesAny } from "../glob.js";
+import { CONTEXT_DIR } from "../paths.js";
 import type { FreshnessLevel, Section } from "../types.js";
-import { findFences, type RepoIndex, type Target } from "./targets.js";
+import { findFences, headingTargets, type RepoIndex, readLines, type Target } from "./targets.js";
 
 /**
  * The evidence `baton explain` answers from: literal facts read out of the repo,
@@ -139,7 +139,7 @@ class Collector {
       case "mermaid":
         return [
           diagramFact(target),
-          ...this.enclosingDoc(target),
+          ...(await this.enclosingDoc(target)),
           ...(await this.mentionFacts(target.name, () => false)),
         ];
     }
@@ -280,11 +280,29 @@ class Collector {
 
   // ------------------------------------------------------------------ mermaid
 
-  /** The body of the nearest heading above the diagram, which encloses its fence. */
-  private enclosingDoc(target: Target & { kind: "mermaid" }): Fact[] {
+  /**
+   * What encloses the diagram's fence. In `.context/` files that is the section
+   * the fence sits in (with its freshness, never "no provenance"); elsewhere it
+   * is the body of the nearest heading above, read with the index's own heading
+   * parser so README and docs agree.
+   */
+  private async enclosingDoc(target: Target & { kind: "mermaid" }): Promise<Fact[]> {
+    if (target.source.startsWith(`${CONTEXT_DIR}/`)) {
+      let best: Section | null = null;
+      for (const s of [
+        ...this.index.contextSections,
+        ...this.index.decisions.map((d) => d.section),
+      ]) {
+        if (s.file !== target.source || s.line > target.line) continue;
+        if (!best || s.line > best.line) best = s;
+      }
+      return best ? [await this.sectionFact(best, this.isDecision(best))] : [];
+    }
+    const lines = await this.lines(target.source);
+    if (!lines) return [];
     let best: (Target & { kind: "heading" }) | null = null;
-    for (const t of this.index.targets) {
-      if (t.kind !== "heading" || t.source !== target.source || t.line > target.line) continue;
+    for (const t of headingTargets(target.source, lines)) {
+      if (t.kind !== "heading" || t.line > target.line) continue;
       if (!best || t.line > best.line) best = t;
     }
     return best ? docFact(best.source, best.line, best.body) : [];
@@ -314,14 +332,7 @@ class Collector {
 
   private async lines(repoPath: string): Promise<string[] | null> {
     if (!this.lineCache.has(repoPath)) {
-      let lines: string[] | null = null;
-      try {
-        const text = await readFile(join(this.index.root, repoPath), "utf8");
-        lines = text.replace(/^﻿/, "").replace(/\r\n?/g, "\n").split("\n");
-      } catch {
-        lines = null;
-      }
-      this.lineCache.set(repoPath, lines);
+      this.lineCache.set(repoPath, await readLines(this.index.root, repoPath));
     }
     return this.lineCache.get(repoPath) ?? null;
   }

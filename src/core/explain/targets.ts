@@ -111,7 +111,7 @@ async function readText(root: string, repoPath: string): Promise<string | null> 
   }
 }
 
-async function readLines(root: string, repoPath: string): Promise<string[] | null> {
+export async function readLines(root: string, repoPath: string): Promise<string[] | null> {
   const text = await readText(root, repoPath);
   return text === null ? null : text.split("\n");
 }
@@ -330,7 +330,7 @@ export function findFences(lines: string[]): Fence[] {
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 
-function headingTargets(file: string, lines: string[]): Target[] {
+export function headingTargets(file: string, lines: string[]): Target[] {
   const fences = findFences(lines);
   const inFence = (i: number) => fences.some((f) => i >= f.open && i <= f.close);
 
