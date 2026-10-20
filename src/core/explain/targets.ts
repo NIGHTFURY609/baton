@@ -49,19 +49,28 @@ export interface RepoIndex {
   /** .context/decisions/*.md that carry an id. */
   decisions: Decision[];
   targets: Target[];
+  /** Malformed files that were left out of the index; `file` is a POSIX repo path. */
+  skipped: SkippedFile[];
+}
+
+export interface SkippedFile {
+  file: string;
+  /** One-line error message. */
+  error: string;
 }
 
 const WALK_SKIP = new Set([".git", "node_modules", "dist"]);
 const CACHE_DIR = `${CONTEXT_DIR}/${ContextPaths.cache}`;
 
 export async function buildIndex(root: string): Promise<RepoIndex> {
+  const skipped: SkippedFile[] = [];
   const files = await listFiles(root);
-  const contextSections = await loadContextSections(root);
-  const decisions = await loadDecisions(root);
+  const contextSections = await loadContextSections(root, skipped);
+  const decisions = await loadDecisions(root, skipped);
 
   const targets: Target[] = [
     ...fileTargets(files),
-    ...(await dependencyTargets(root)),
+    ...(await dependencyTargets(root, skipped)),
     ...[...contextSections, ...decisions.map((d) => d.section)].map(sectionTarget),
   ];
 
@@ -75,10 +84,15 @@ export async function buildIndex(root: string): Promise<RepoIndex> {
     targets.push(...mermaidTargets(file, lines));
   }
 
-  return { root, files, contextSections, decisions, targets };
+  return { root, files, contextSections, decisions, targets, skipped };
 }
 
 // ---------------------------------------------------------------- helpers
+
+function skip(skipped: SkippedFile[], file: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  skipped.push({ file, error: message.split("\n")[0]?.trim() || "unreadable" });
+}
 
 function keysOf(...names: string[]): string[] {
   return [...new Set(names.map(toKey).filter((k) => k !== ""))];
@@ -167,16 +181,20 @@ function fileTargets(files: string[]): Target[] {
 
 // ----------------------------------------------------------- dependencies
 
-async function dependencyTargets(root: string): Promise<Target[]> {
+async function dependencyTargets(root: string, skipped: SkippedFile[]): Promise<Target[]> {
   const text = await readText(root, "package.json");
   if (text === null) return [];
   let pkg: unknown;
   try {
     pkg = JSON.parse(text);
-  } catch {
+  } catch (err) {
+    skip(skipped, "package.json", err);
     return [];
   }
-  if (typeof pkg !== "object" || pkg === null) return [];
+  if (typeof pkg !== "object" || pkg === null) {
+    skip(skipped, "package.json", new Error("package.json must be a JSON object"));
+    return [];
+  }
   const lines = text.split("\n");
   const out: Target[] = [];
   for (const [field, dev] of [
@@ -219,7 +237,7 @@ async function markdownIn(root: string, repoDir: string): Promise<string[]> {
   }
 }
 
-async function loadContextSections(root: string): Promise<Section[]> {
+async function loadContextSections(root: string, skipped: SkippedFile[]): Promise<Section[]> {
   const sections: Section[] = [];
   const knowledge = await markdownIn(root, `${CONTEXT_DIR}/${ContextPaths.knowledge}`);
   const candidates = [
@@ -236,14 +254,15 @@ async function loadContextSections(root: string): Promise<Section[]> {
         const section = parseFileSection(text, file);
         if (section) sections.push(section);
       }
-    } catch {
+    } catch (err) {
       // Malformed file (duplicate id, bad marker): skip it, keep indexing.
+      skip(skipped, file, err);
     }
   }
   return sections;
 }
 
-async function loadDecisions(root: string): Promise<Decision[]> {
+async function loadDecisions(root: string, skipped: SkippedFile[]): Promise<Decision[]> {
   const decisions: Decision[] = [];
   for (const file of await markdownIn(root, `${CONTEXT_DIR}/${ContextPaths.decisions}`)) {
     const text = await readText(root, file);
@@ -254,8 +273,9 @@ async function loadDecisions(root: string): Promise<Decision[]> {
       const raw = parseFrontmatter(text).data.spec_sections;
       const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
       decisions.push({ section, specSections: list.filter((s) => typeof s === "string") });
-    } catch {
+    } catch (err) {
       // Malformed ADR: skip it.
+      skip(skipped, file, err);
     }
   }
   return decisions;
@@ -355,8 +375,11 @@ const NODE_RE = new RegExp(
   `(${ID})(?:\\(\\(("[^"]*"|.*?)\\)\\)|\\[${quoted("\\]")}\\]|\\(${quoted("\\)")}\\)|\\{${quoted("\\}")}\\}|>${quoted("\\]")}\\])?`,
   "y",
 );
-// --> --- -.-> -.- ==> , with an optional |text| that we do not need.
-const ARROW_RE = /(?:-\.+-?>?|[-=]{2,}>?)(?:\s*\|[^|]*\|)?/y;
+// Arrows: --> --- -.-> -.- ==> (plain), or `-- text -->` / `== text ==>` / `-. text .->`
+// (text between the dashes), each with an optional |text| we do not need. A bare
+// `--` or `==` is not an arrow, so `A -- uses --> B` never invents a node "uses".
+const ARROW_RE =
+  /(?:-\.+-+>?|-{2,}>|-{3,}|={2,}>|(?:--|==|-\.)\s+.+?\s+(?:-{2,}>|-{3,}|={2,}>|\.+-+>?))(?:\s*\|[^|]*\|)?/y;
 const IGNORED_LINE_RE =
   /^(?:graph|flowchart|subgraph|end|classDef|class|style|linkStyle|click|direction)\b/;
 

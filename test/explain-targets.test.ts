@@ -132,6 +132,29 @@ describe("buildIndex", () => {
     });
     const index = await buildIndex(root);
     expect(index.contextSections.map((s) => s.meta.id)).toEqual(["style"]);
+    const spec = index.skipped.find((s) => s.file === ".context/spec.md");
+    expect(spec?.error).toMatch(/duplicate/);
+    expect(spec?.error).not.toContain("\n");
+    expect(index.skipped.map((s) => s.file)).toContain(".context/knowledge/bad.md");
+    expect(index.skipped.every((s) => s.error !== "")).toBe(true);
+  });
+
+  it("reports a malformed package.json and a broken ADR as skipped", async () => {
+    const root = await makeTempDir();
+    await writeFiles(root, {
+      "package.json": "{ not json",
+      ".context/decisions/0001-bad.md": "---\nid: Not Kebab\nkind: decision\n---\n# Bad\n",
+    });
+    const index = await buildIndex(root);
+    expect(index.decisions).toEqual([]);
+    expect(index.skipped.map((s) => s.file).sort()).toEqual([
+      ".context/decisions/0001-bad.md",
+      "package.json",
+    ]);
+  });
+
+  it("reports nothing skipped for a healthy repo", async () => {
+    expect((await buildIndex(await makeFixture())).skipped).toEqual([]);
   });
 
   it("indexes knowledge notes but not STATE.md", async () => {
@@ -202,5 +225,40 @@ describe("buildIndex", () => {
     });
     expect(nodes.find((n) => n.nodeId === "Z")?.edgesOut).toEqual(["Lonely"]);
     expect(nodes.find((n) => n.nodeId === "X")?.line).toBe(6);
+  });
+
+  it("reads labelled arrows as one edge and never invents a node from the text", async () => {
+    const root = await makeTempDir();
+    await writeFiles(root, {
+      "docs/m.md": [
+        "```mermaid",
+        "flowchart LR",
+        "  A -- uses --> B",
+        "  B == big call ==> C",
+        "  C -. maybe .-> D",
+        "  D --- E",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const { targets } = await buildIndex(root);
+    const nodes = targets.flatMap((t) => (t.kind === "mermaid" ? [t] : []));
+    expect(nodes.map((n) => n.nodeId)).toEqual(["A", "B", "C", "D", "E"]);
+    expect(nodes.some((n) => n.name === "uses")).toBe(false);
+    expect(nodes.find((n) => n.nodeId === "A")?.edgesOut).toEqual(["B"]);
+    expect(nodes.find((n) => n.nodeId === "B")).toMatchObject({ edgesIn: ["A"], edgesOut: ["C"] });
+    expect(nodes.find((n) => n.nodeId === "C")).toMatchObject({ edgesIn: ["B"], edgesOut: ["D"] });
+    expect(nodes.find((n) => n.nodeId === "E")?.edgesIn).toEqual(["D"]);
+  });
+
+  it("does not treat a bare -- or == as an arrow", async () => {
+    const root = await makeTempDir();
+    await writeFiles(root, {
+      "docs/m.md": "```mermaid\nflowchart LR\n  A -- B\n  C == D\n```\n",
+    });
+    const { targets } = await buildIndex(root);
+    const nodes = targets.flatMap((t) => (t.kind === "mermaid" ? [t] : []));
+    expect(nodes.map((n) => n.nodeId)).toEqual(["A", "C"]);
+    expect(nodes.every((n) => n.edgesIn.length === 0 && n.edgesOut.length === 0)).toBe(true);
   });
 });
