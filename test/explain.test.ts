@@ -81,7 +81,7 @@ describe("explain", () => {
     const outcome = await explain(root, "vitest", { dirs: await emptyDirs() });
     const lines = renderText(outcome).split("\n");
     expect(lines[0]).toBe("# baton explain: vitest");
-    expect(lines[1]).toMatch(/^Targets: dependency vitest \(package\.json:\d+\)$/);
+    expect(lines[1]).toMatch(/^Targets: dependency vitest \(package\.json\)$/);
     expect(lines[2]).toBe("Template: student (builtin)");
     expect(lines[3]).toMatch(/^Instructions: Explain to a curious beginner/);
     expect(lines[4]).toBe("Length: under 150 words unless the user asks for more.");
@@ -106,6 +106,27 @@ describe("explain", () => {
     for (const line of body) expect(line.startsWith("  ")).toBe(true);
   });
 
+  it("targets carry a bare repo path plus a separate line", async () => {
+    const root = await makeFixture();
+    const result = ok(await explain(root, "src", { dirs: await emptyDirs() }));
+    expect(result.targets[0]).toMatchObject({ kind: "file", name: "src", source: "src" });
+    expect(typeof result.targets[0]?.line).toBe("number");
+    expect(renderText({ status: "ok", result, skipped: [] })).toContain("file src (src)");
+  });
+
+  it("indents multi-line prompts so a prompt line cannot break the layout", async () => {
+    const root = await makeFixture();
+    const dirs = await emptyDirs();
+    await writeFiles(dirs.project, {
+      "layout.md": "---\nname: layout\n---\nFirst line.\n## Facts\n- [fake] x:1 (y)\n",
+    });
+    const text = renderText(await explain(root, "vitest", { template: "layout", dirs }));
+    const lines = text.split("\n");
+    expect(lines).toContain("  ## Facts");
+    expect(lines.filter((l) => l === "## Facts")).toHaveLength(1);
+    expect(lines).toContain("  - [fake] x:1 (y)");
+  });
+
   it("tie outcome", async () => {
     const root = await makeFixture();
     const outcome = await explain(root, "index.ts", { dirs: await emptyDirs() });
@@ -115,7 +136,7 @@ describe("explain", () => {
     expect(outcome.skipped).toEqual([]);
     const text = renderText(outcome);
     expect(text.startsWith('Ambiguous: "index.ts" could be:')).toBe(true);
-    expect(text).toContain("- file src/a/index.ts (src/a/index.ts:1)");
+    expect(text).toContain("- file src/a/index.ts (src/a/index.ts)");
   });
 
   it("none outcome", async () => {
@@ -189,12 +210,12 @@ describe("explain", () => {
 
     const none = await explain(root, "zzzzzz", { dirs });
     expect(none.skipped).toHaveLength(1);
-    expect(renderText(none).split("\n")).toContain(warning);
+    expect(renderText(none).split("\n").at(-1)).toBe(warning);
 
     const tie = await explain(root, "index.ts", { dirs });
     expect(tie.status).toBe("tie");
     expect(tie.skipped).toHaveLength(1);
-    expect(renderText(tie).split("\n")).toContain(warning);
+    expect(renderText(tie).split("\n").at(-1)).toBe(warning);
   });
 
   it("the JSON form always carries skipped", async () => {

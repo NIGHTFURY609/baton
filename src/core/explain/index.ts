@@ -20,7 +20,10 @@ export const DEFAULT_MAX_WORDS = 150;
 export interface TargetRef {
   kind: TargetKind;
   name: string;
+  /** Repo path (POSIX) of the file the target lives in. */
   source: string;
+  /** 1-based line within `source`. */
+  line: number;
 }
 
 export interface ExplainResult {
@@ -40,7 +43,7 @@ export type ExplainOutcome =
   | { status: "none"; query: string; suggestions: string[]; skipped: SkippedFile[] };
 
 function ref(t: Target): TargetRef {
-  return { kind: t.kind, name: t.name, source: `${t.source}:${t.line}` };
+  return { kind: t.kind, name: t.name, source: t.source, line: t.line };
 }
 
 export async function explain(
@@ -120,7 +123,7 @@ export function renderText(outcome: ExplainOutcome): string {
   lines.push(
     `Targets: ${result.targets.map((t) => `${t.kind} ${t.name} (${t.source})`).join(", ")}`,
     `Template: ${result.template.name} (${result.template.source})`,
-    `Instructions: ${result.template.prompt}`,
+    `Instructions: ${result.template.prompt.replace(/\r?\n/g, "\n  ")}`,
     `Length: under ${result.maxWords} words unless the user asks for more.`,
   );
   if (result.noRecordedReason) {
