@@ -189,6 +189,30 @@ describe("explain templates", () => {
     expect(t.prompt).toBe("Line one.\nLine two.");
   });
 
+  it("reports a malformed override instead of falling back to a lower copy", async () => {
+    const dirs = freshDirs();
+    mkdirSync(dirs.project, { recursive: true });
+    writeFileSync(
+      join(dirs.project, "caveman.md"),
+      "---\nname: caveman\ndescription: Note: grunt only\n---\nUgh.\n",
+    );
+    const err = await resolveTemplate(dirs, "caveman").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BatonError);
+    expect((err as BatonError).exitCode).toBe(1);
+    expect((err as BatonError).message).toContain("caveman.md");
+    expect(await exitCodeOf(listTemplates(dirs))).toBe(1);
+  });
+
+  it("reports a template file with an empty prompt", async () => {
+    const dirs = freshDirs();
+    mkdirSync(dirs.personal, { recursive: true });
+    writeFileSync(join(dirs.personal, "blank.md"), "---\nname: blank\n---\n\n");
+    const err = await resolveTemplate(dirs, "blank").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BatonError);
+    expect((err as BatonError).exitCode).toBe(1);
+    expect((err as BatonError).message).toContain("blank.md");
+  });
+
   it("uses the filename slug as the name and the body as the prompt", async () => {
     const dirs = freshDirs();
     mkdirSync(dirs.personal, { recursive: true });

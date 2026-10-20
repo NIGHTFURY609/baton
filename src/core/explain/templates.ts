@@ -83,14 +83,16 @@ async function readDir(dir: string, source: TemplateSource): Promise<Template[]>
     if (!file.endsWith(".md")) continue;
     const name = toKey(file.slice(0, -".md".length));
     if (name === "") continue;
+    const path = join(dir, file);
     let parsed: ReturnType<typeof parseFrontmatter>;
     try {
-      parsed = parseFrontmatter(await readFile(join(dir, file), "utf8"));
-    } catch {
-      continue; // unreadable or malformed template files are skipped, not fatal
+      parsed = parseFrontmatter(await readFile(path, "utf8"));
+    } catch (e) {
+      // A broken file must not silently fall back to a lower-precedence copy.
+      throw new BatonError(`${path}: cannot read template: ${(e as Error).message}`);
     }
     const prompt = parsed.body.replace(/\r\n/g, "\n").trim();
-    if (prompt === "") continue;
+    if (prompt === "") throw new BatonError(`${path}: template has an empty prompt`);
     const description =
       typeof parsed.data.description === "string" && parsed.data.description.trim() !== ""
         ? parsed.data.description.trim()
