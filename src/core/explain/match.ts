@@ -49,10 +49,15 @@ export type MatchResult<T extends Matchable> =
   | { status: "none"; suggestions: T[] };
 
 const MAX_SUGGESTIONS = 3;
+/** Keys shorter than this (one-letter mermaid ids) are too weak to fuzzy-match. */
+const MIN_FUZZY_KEY = 3;
 
 function distanceTo(q: string, target: Matchable): number {
   let best = Number.POSITIVE_INFINITY;
-  for (const key of target.keys) best = Math.min(best, editDistance(q, key));
+  for (const key of target.keys) {
+    if (key.length < MIN_FUZZY_KEY) continue;
+    best = Math.min(best, editDistance(q, key));
+  }
   return best;
 }
 
@@ -64,8 +69,20 @@ export function matchTargets<T extends Matchable>(
 
   const exact = targets.filter((t) => t.keys.includes(q));
   if (exact.length > 0) {
-    // Two different files sharing a key (a basename) are different things.
     const files = exact.filter((t) => t.kind === "file");
+    const others = exact.filter((t) => t.kind !== "file");
+
+    // A query spelled as one file's full path picks that file: `README.md` is the
+    // root README even though `templates/README.md` shares its basename.
+    const byPath = files.filter((f) => toKey(f.name) === q);
+    if (byPath.length === 1) return { status: "exact", matches: [...others, ...byPath] };
+
+    // One name that is a spec id, a heading and a directory at once is "one concept,
+    // not a tie: merge" (spec, "Exact match in several kinds"). The same-basename
+    // files are the only ambiguous part, so they are dropped, not tied on.
+    if (others.length > 0) return { status: "exact", matches: others };
+
+    // Only files left: two different ones sharing a key (a basename) are different things.
     if (files.length > 1 && new Set(files.map((f) => f.name)).size > 1) {
       return { status: "tie", candidates: files };
     }
@@ -84,9 +101,12 @@ export function matchTargets<T extends Matchable>(
       : { status: "tie", candidates: best };
   }
 
+  // A suggestion further away than this is noise, not help.
+  const farthest = Math.max(3, Math.floor(q.length / 2));
   const suggestions: T[] = [];
   const seen = new Set<string>();
-  for (const { target } of [...scored].sort((a, b) => a.distance - b.distance)) {
+  for (const { target, distance } of [...scored].sort((a, b) => a.distance - b.distance)) {
+    if (distance > farthest) break;
     const name = toKey(target.name);
     if (seen.has(name)) continue;
     seen.add(name);

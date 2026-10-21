@@ -68,17 +68,100 @@ describe("matchTargets", () => {
   });
 
   it("none with suggestions", () => {
-    const result = matchTargets("zzzzzz", [
+    // "alphaxyz" is 3 edits from "alpha": too far to match, near enough to suggest.
+    const result = matchTargets("alphaxyz", [
       target("dep", "alpha"),
-      target("dep", "bravo"),
-      target("dep", "charlie"),
-      target("dep", "delta"),
+      target("dep", "alphabetz"),
       target("dep", "echo"),
     ]);
     expect(result.status).toBe("none");
     if (result.status === "none") {
-      expect(result.suggestions.length).toBeGreaterThan(0);
-      expect(result.suggestions.length).toBeLessThanOrEqual(3);
+      expect(result.suggestions.map((s) => s.name)).toEqual(["alpha", "alphabetz"]);
+    }
+  });
+
+  it("suggestions beyond the distance limit are dropped", () => {
+    const far = matchTargets("zzzzzz", [
+      target("dep", "alpha"),
+      target("dep", "bravo"),
+      target("dep", "charlie"),
+    ]);
+    expect(far).toEqual({ status: "none", suggestions: [] });
+
+    // The limit is max(3, floor(length / 2)), so 5 edits for a 10-letter query.
+    const near = matchTargets("abcdefghij", [
+      target("dep", "abcdef"), // 4 edits
+      target("dep", "abcde"), // 5 edits: exactly the limit
+      target("dep", "abcd"), // 6 edits: dropped
+    ]);
+    expect(near.status).toBe("none");
+    if (near.status === "none") {
+      expect(near.suggestions.map((s) => s.name)).toEqual(["abcdef", "abcde"]);
+    }
+  });
+
+  it("one-letter keys never take part in the fuzzy pass", () => {
+    const targets = [
+      target("mermaid", "Mission packet", ["mission-packet", "b"]),
+      target("mermaid", "Session start", ["session-start", "a"]),
+    ];
+    // Before: "db" was one edit from the id "b" and resolved to "Mission packet".
+    expect(matchTargets("db", targets).status).toBe("none");
+    // Exact still works on a short key.
+    const exact = matchTargets("b", targets);
+    expect(exact.status).toBe("exact");
+    if (exact.status === "exact")
+      expect(exact.matches.map((m) => m.name)).toEqual(["Mission packet"]);
+  });
+
+  it("a name that is a section, a heading and two directories merges, not ties", () => {
+    const result = matchTargets("hooks", [
+      target("file", "plugin/hooks", ["plugin-hooks", "hooks"]),
+      target("file", "src/hooks", ["src-hooks", "hooks"]),
+      target("section", "Hooks", ["hooks"]),
+      target("heading", "Hooks", ["hooks"]),
+    ]);
+    expect(result.status).toBe("exact");
+    if (result.status === "exact") {
+      expect(result.matches.map((m) => m.kind)).toEqual(["section", "heading"]);
+    }
+  });
+
+  it("a root file wins over same-basename files when asked by its full path", () => {
+    const targets = [
+      target("file", "README.md", ["readme-md"]),
+      target("file", "templates/README.md", ["templates-readme-md", "readme-md"]),
+    ];
+    const root = matchTargets("README.md", targets);
+    expect(root.status).toBe("exact");
+    if (root.status === "exact") expect(root.matches.map((m) => m.name)).toEqual(["README.md"]);
+
+    const nested = matchTargets("templates/README.md", targets);
+    expect(nested.status).toBe("exact");
+    if (nested.status === "exact") {
+      expect(nested.matches.map((m) => m.name)).toEqual(["templates/README.md"]);
+    }
+
+    // Only the bare basename is a real tie when neither file is at the root.
+    const tie = matchTargets("index.ts", [
+      target("file", "src/a/index.ts", ["src-a-index-ts", "index-ts"]),
+      target("file", "src/b/index.ts", ["src-b-index-ts", "index-ts"]),
+    ]);
+    expect(tie.status).toBe("tie");
+  });
+
+  it("the full-path file joins the non-file matches", () => {
+    const result = matchTargets("README.md", [
+      target("file", "README.md", ["readme-md"]),
+      target("file", "docs/README.md", ["docs-readme-md", "readme-md"]),
+      target("heading", "README.md", ["readme-md"]),
+    ]);
+    expect(result.status).toBe("exact");
+    if (result.status === "exact") {
+      expect(result.matches.map((m) => `${m.kind}:${m.name}`)).toEqual([
+        "heading:README.md",
+        "file:README.md",
+      ]);
     }
   });
 
