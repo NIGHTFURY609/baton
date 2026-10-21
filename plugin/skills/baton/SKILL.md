@@ -14,7 +14,7 @@ Take the first word of `$ARGUMENTS`.
 - `handoff`, `decide`, `checkpoint`, `doc-audit` or `init-spec`: follow that skill's steps, using the remaining arguments as its input.
 - `explain`: use the Explain procedure below.
 - Anything else: run `baton $ARGUMENTS` and report the result. Exit code 2 means blocked: say why, using the command's own message. Exit code 3 means not built yet: say so and do not retry.
-- No arguments: run `baton --help` and show the commands.
+- No arguments: if the user's message asks for an explanation ("explain supabase like a caveman"), map it to `explain <thing> [--as <template>]` and use the Explain procedure. Otherwise run `baton --help` and show the commands.
 
 ## Explain procedure
 
@@ -22,7 +22,9 @@ Take the first word of `$ARGUMENTS`.
 
 **Template management.** If the arguments contain `-c`, `--create`, `--delete` or `--templates` (create also takes `-p`, `-s` and `--force`), run `baton $ARGUMENTS` and report what it printed. Do not add `--format json`.
 
-**Otherwise,** run `baton $ARGUMENTS --format json` and branch on `status`. Exit code 2 (a tie) and 1 (none) still print JSON on stdout; read it. Any other failure (for example an unknown template name), report the error as printed.
+**Otherwise,** first split the arguments into two parts. The CLI part is `explain <thing>` plus its flags (`--as <template>`; quote a multi-word value). Everything else is writer instructions: length, tone or audience ("super brief", "technical", "for a judge"). The CLI joins every free word into the query, so extra words left in the command make the lookup fail. If it is unclear which words name the thing, ask the user. For example, `explain commander --as caveman super brief` runs `baton explain commander --as caveman --format json`, and "super brief" is applied when writing.
+
+Run only the CLI part with `--format json` appended, and branch on `status`. Exit code 2 (a tie) and 1 (none) still print JSON on stdout; read it. Any other failure (for example an unknown template name), report the error as printed.
 
 - `"tie"`: list each entry of `candidates` (`kind`, `name`, `source`) and ask the user which one they meant. Do not pick one.
 - `"none"`: say nothing matched, and list `suggestions` if there are any.
@@ -30,7 +32,7 @@ Take the first word of `$ARGUMENTS`.
   - Use the voice in `result.template.prompt`.
   - Use only what is in `result.facts`. Each fact has a `source` (`path:line`); cite sources where it helps. Do not add anything you know from elsewhere or guess.
   - Stay under `result.maxWords` words, unless the user's own message asks for more or less.
-  - The user's extra words ("technical", "super brief", "for a judge") override the template.
+  - The writer instructions you split off ("technical", "super brief", "for a judge") override the template.
   - If `result.resolution` is `"closest"`, say in the first line that no exact match was found and which target you explained instead (`result.targets`).
   - If `result.noRecordedReason` is true, say plainly that no reason for this is recorded, and never invent a purpose.
   - If a fact's `provenance` is `stale`, `aging` or `unverified`, say that part may be out of date. `superseded` means the record was replaced; do not present it as current.
