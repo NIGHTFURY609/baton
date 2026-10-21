@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { relative } from "node:path";
+import nodePath, { type PlatformPath } from "node:path";
 import type { Command } from "commander";
 import { BatonError, ExitCode } from "../core/errors.js";
 import { explain, renderText } from "../core/explain/index.js";
@@ -29,11 +29,31 @@ const SCOPES: readonly Scope[] = ["both", "project", "personal"];
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
 
-/** Show a template path relative to the project root, or under `~` for the personal dir. */
-function display(path: string, root: string, home: string): string {
-  const inProject = relative(root, path);
-  if (!inProject.startsWith("..")) return slashes(inProject);
-  return `~/${slashes(relative(home, path))}`;
+/** True when `rel` (a `relative()` result) points strictly inside its base. */
+function inside(rel: string, pathMod: PlatformPath): boolean {
+  return rel !== "" && rel.split(pathMod.sep)[0] !== ".." && !pathMod.isAbsolute(rel);
+}
+
+/**
+ * Show a template path for the user: `~/...` when it is inside the personal
+ * template dir, relative to the project root when it is inside the root, else
+ * the full path (forward slashes). The personal dir is checked first, so a home
+ * folder that contains the project does not turn project paths into `~/proj/...`,
+ * and a personal dir nested in the project still prints as `~`. Containment is
+ * a real test, so a path on another Windows drive (where `relative` returns an
+ * absolute path) is never mistaken for a relative one.
+ */
+export function displayPath(
+  path: string,
+  where: { root: string; home: string; personalDir: string },
+  pathMod: PlatformPath = nodePath,
+): string {
+  if (inside(pathMod.relative(where.personalDir, path), pathMod)) {
+    return `~/${slashes(pathMod.relative(where.home, path))}`;
+  }
+  const inProject = pathMod.relative(where.root, path);
+  if (inside(inProject, pathMod)) return slashes(inProject);
+  return slashes(path);
 }
 
 export function registerExplain(program: Command): void {
@@ -70,6 +90,7 @@ export function registerExplain(program: Command): void {
         const root = findProjectRoot();
         const home = process.env.BATON_HOME ?? homedir();
         const dirs = templateDirs(root, home);
+        const where = { root, home, personalDir: dirs.personal };
 
         if (opts.templates) {
           for (const t of await listTemplates(dirs)) {
@@ -84,13 +105,13 @@ export function registerExplain(program: Command): void {
             scope,
             force: opts.force === true,
           });
-          for (const p of paths) process.stdout.write(`created ${display(p, root, home)}\n`);
+          for (const p of paths) process.stdout.write(`created ${displayPath(p, where)}\n`);
           return;
         }
 
         if (opts.delete !== undefined) {
           for (const p of await deleteTemplate(dirs, opts.delete, scope)) {
-            process.stdout.write(`removed ${display(p, root, home)}\n`);
+            process.stdout.write(`removed ${displayPath(p, where)}\n`);
           }
           return;
         }
