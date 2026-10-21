@@ -33,29 +33,35 @@ const MAX_DESCRIPTION = 80;
 const NO_REASON =
   "If the repo records no reason for something, say so plainly instead of guessing one.";
 
-function builtin(name: string, prompt: string): Template {
-  return { name, description: describe(prompt), prompt, source: "builtin" };
+/** Built-ins carry hand-written one-line descriptions (at most 80 characters). */
+function builtin(name: string, description: string, prompt: string): Template {
+  return { name, description, prompt, source: "builtin" };
 }
 
 export const BUILTIN_TEMPLATES: readonly Template[] = [
   builtin(
     "caveman",
+    "Tiny words, short sentences, no jargon.",
     `Explain like a caveman: tiny words, short sentences, no jargon. ${NO_REASON}`,
   ),
   builtin(
     "baby",
+    "Everyday analogies, as if to a small child.",
     `Explain as if to a small child, using analogies from everyday life. ${NO_REASON}`,
   ),
   builtin(
     "student",
+    "Plain language for a curious beginner; terms defined on first use.",
     `Explain to a curious beginner: plain language, and define every term the first time you use it. ${NO_REASON}`,
   ),
   builtin(
     "engineer",
+    "Technical and precise, naming the files and interfaces involved.",
     `Explain to an engineer: technical and precise, naming the files and interfaces involved. ${NO_REASON}`,
   ),
   builtin(
     "pitch",
+    "A 30-second spoken pitch: the problem, then why the solution impresses.",
     `Explain as a spoken pitch of about 30 seconds (about 75 words): state the problem first, then why the solution is impressive. ${NO_REASON}`,
   ),
 ];

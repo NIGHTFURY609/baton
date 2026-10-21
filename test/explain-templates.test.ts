@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BatonError } from "../src/core/errors.js";
 import {
+  BUILTIN_TEMPLATES,
   createTemplate,
   DEFAULT_TEMPLATE,
   deleteTemplate,
@@ -33,6 +34,21 @@ const projectOnly = { scope: "project", force: false } as const;
 const personalOnly = { scope: "personal", force: false } as const;
 
 describe("explain templates", () => {
+  it("built-ins carry hand-written one-line descriptions", () => {
+    expect(BUILTIN_TEMPLATES.map((t) => [t.name, t.description])).toEqual([
+      ["caveman", "Tiny words, short sentences, no jargon."],
+      ["baby", "Everyday analogies, as if to a small child."],
+      ["student", "Plain language for a curious beginner; terms defined on first use."],
+      ["engineer", "Technical and precise, naming the files and interfaces involved."],
+      ["pitch", "A 30-second spoken pitch: the problem, then why the solution impresses."],
+    ]);
+    for (const t of BUILTIN_TEMPLATES) {
+      expect(t.description.length).toBeLessThanOrEqual(80);
+      expect(t.description).toMatch(/[.:;)\w]$/);
+      expect(t.description).not.toContain("\n");
+    }
+  });
+
   it("derives the project and personal dirs", () => {
     const dirs = templateDirs("/r", "/h");
     expect(dirs.project.replace(/\\/g, "/")).toMatch(/\/r\/\.context\/explain$/);
