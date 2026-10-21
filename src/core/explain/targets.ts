@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFileSection, parseFrontmatter, parseSections } from "../frontmatter.js";
@@ -62,9 +61,12 @@ export interface SkippedFile {
 const WALK_SKIP = new Set([".git", "node_modules", "dist"]);
 const CACHE_DIR = `${CONTEXT_DIR}/${ContextPaths.cache}`;
 
-export async function buildIndex(root: string): Promise<RepoIndex> {
+export async function buildIndex(
+  root: string,
+  opts: { maxFiles?: number } = {},
+): Promise<RepoIndex> {
   const skipped: SkippedFile[] = [];
-  const files = await listFiles(root);
+  const files = await listFiles(root, skipped, opts.maxFiles ?? MAX_INDEXED_FILES);
   const contextSections = await loadContextSections(root, skipped);
   const decisions = await loadDecisions(root, skipped);
 
@@ -89,9 +91,13 @@ export async function buildIndex(root: string): Promise<RepoIndex> {
 
 // ---------------------------------------------------------------- helpers
 
-function skip(skipped: SkippedFile[], file: string, err: unknown): void {
+function firstLine(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  skipped.push({ file, error: message.split("\n")[0]?.trim() || "unreadable" });
+  return message.split("\n")[0]?.trim() || "unreadable";
+}
+
+export function skip(skipped: SkippedFile[], file: string, err: unknown): void {
+  skipped.push({ file, error: firstLine(err) });
 }
 
 function keysOf(...names: string[]): string[] {
@@ -124,39 +130,63 @@ function isContextMarkdown(file: string): boolean {
 
 // ------------------------------------------------------------------ files
 
-async function listFiles(root: string): Promise<string[]> {
+/** Most files indexed in one run; a bigger tree is truncated and reported. */
+export const MAX_INDEXED_FILES = 50_000;
+
+async function listFiles(
+  root: string,
+  skipped: SkippedFile[],
+  maxFiles: number,
+): Promise<string[]> {
   let files: string[] | null = null;
   if (await isGitRepo(root)) {
     try {
       // -z: paths come back raw, not quoted/escaped (non-ASCII names, spaces).
-      const out = await git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root);
-      // --cached still lists files deleted from the work tree; drop them.
-      files = [...new Set(out.split("\0").filter(Boolean))].filter((f) =>
-        existsSync(join(root, f)),
+      const listed = await git(
+        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        root,
       );
-    } catch {
-      files = null; // fall back to a plain walk
+      // --cached still lists files deleted from the work tree; drop them.
+      const deleted = new Set((await git(["ls-files", "--deleted", "-z"], root)).split("\0"));
+      files = [...new Set(listed.split("\0").filter((f) => f !== "" && !deleted.has(f)))];
+      // A folder ignored by an ancestor repo lists nothing; walk it instead.
+      if (files.length === 0) files = null;
+    } catch (err) {
+      // Inside a repo a failed listing (say, output over the buffer) must not fall
+      // back to the .gitignore-blind walk: report it and index no files.
+      skip(skipped, "<root>", new Error(`git ls-files failed: ${firstLine(err)}`));
+      return [];
     }
   }
-  files ??= await walk(root, root);
-  return files.sort();
+  files ??= await walk(root, maxFiles + 1);
+  files.sort();
+  if (files.length > maxFiles) {
+    files.length = maxFiles;
+    skipped.push({ file: "<root>", error: `file list truncated at ${maxFiles} files` });
+  }
+  return files;
 }
 
-async function walk(root: string, dir: string): Promise<string[]> {
+/** Iterative (no recursion, no spreading) and stops once `limit` files are found. */
+async function walk(root: string, limit: number): Promise<string[]> {
   const found: string[] = [];
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return found;
-  }
-  for (const entry of entries) {
-    const abs = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (WALK_SKIP.has(entry.name) || toRepoPath(root, abs) === CACHE_DIR) continue;
-      found.push(...(await walk(root, abs)));
-    } else if (entry.isFile()) {
-      found.push(toRepoPath(root, abs));
+  const pending = [root];
+  while (pending.length > 0 && found.length < limit) {
+    const dir = pending.pop() as string;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (WALK_SKIP.has(entry.name) || toRepoPath(root, abs) === CACHE_DIR) continue;
+        pending.push(abs);
+      } else if (entry.isFile()) {
+        found.push(toRepoPath(root, abs));
+      }
     }
   }
   return found;

@@ -3,6 +3,7 @@ import nodePath, { type PlatformPath } from "node:path";
 import type { Command } from "commander";
 import { BatonError, ExitCode } from "../core/errors.js";
 import { explain, renderText } from "../core/explain/index.js";
+import { resolveExplainRoot } from "../core/explain/root.js";
 import {
   createTemplate,
   deleteTemplate,
@@ -10,15 +11,14 @@ import {
   type Scope,
   templateDirs,
 } from "../core/explain/templates.js";
-import { findProjectRoot } from "../core/paths.js";
 import { action } from "./_shared.js";
 
 interface ExplainOptions {
   as?: string;
-  format: string;
+  format?: string;
   create?: string;
   prompt?: string;
-  scope: string;
+  scope?: string;
   force?: boolean;
   delete?: string;
   templates?: boolean;
@@ -56,17 +56,41 @@ export function displayPath(
   return slashes(path);
 }
 
+/**
+ * An option the chosen mode would ignore is a mistake, not a no-op: fail with
+ * the option and the mode named, instead of silently dropping the user's input.
+ */
+function rejectInapplicable(opts: ExplainOptions, explaining: boolean): void {
+  const mode = opts.templates
+    ? "--templates"
+    : opts.create !== undefined
+      ? "--create"
+      : opts.delete !== undefined
+        ? "--delete"
+        : "explain";
+  const reject = (option: string, allowed: string): never => {
+    throw new BatonError(`${option} does not apply to ${mode}; it only works with ${allowed}`);
+  };
+  if (opts.prompt !== undefined && opts.create === undefined) reject("--prompt", "--create");
+  if (opts.force !== undefined && opts.create === undefined) reject("--force", "--create");
+  if (opts.scope !== undefined && opts.create === undefined && opts.delete === undefined) {
+    reject("--scope", "--create or --delete");
+  }
+  if (opts.as !== undefined && !explaining) reject("--as", "explain <thing>");
+  if (opts.format !== undefined && !explaining) reject("--format", "explain <thing>");
+}
+
 export function registerExplain(program: Command): void {
   program
     .command("explain")
     .description("Explain a repo concept, file, or dependency in plain language")
     .argument("[thing...]", "what to explain; several words are joined with a space")
     .option("--as <template>", "template to write the explanation in")
-    .option("--format <format>", "text or json", "text")
+    .option("--format <format>", "text or json (default: text; explain only)")
     .option("-c, --create <name>", "create a custom template")
-    .option("-p, --prompt <text>", "the template prompt (with --create)")
-    .option("-s, --scope <scope>", "both, project or personal", "both")
-    .option("--force", "overwrite an existing template")
+    .option("-p, --prompt <text>", "the template prompt (--create only)")
+    .option("-s, --scope <scope>", "both, project or personal (default: both; --create/--delete)")
+    .option("--force", "overwrite an existing template (--create only)")
     .option("--delete <name>", "delete a custom template")
     .option("--templates", "list available templates")
     .action(
@@ -79,16 +103,20 @@ export function registerExplain(program: Command): void {
           query !== "",
         ].filter(Boolean).length;
         if (modes !== 1) throw new BatonError(MODES);
-        if (opts.format !== "text" && opts.format !== "json") {
-          throw new BatonError(`--format must be text or json, got "${opts.format}"`);
+        const format = opts.format ?? "text";
+        if (format !== "text" && format !== "json") {
+          throw new BatonError(`--format must be text or json, got "${format}"`);
         }
-        if (!SCOPES.includes(opts.scope as Scope)) {
-          throw new BatonError(`--scope must be one of ${SCOPES.join(", ")}, got "${opts.scope}"`);
+        const scopeName = opts.scope ?? "both";
+        if (!SCOPES.includes(scopeName as Scope)) {
+          throw new BatonError(`--scope must be one of ${SCOPES.join(", ")}, got "${scopeName}"`);
         }
-        const scope = opts.scope as Scope;
+        const scope = scopeName as Scope;
+        rejectInapplicable(opts, query !== "");
 
-        const root = findProjectRoot();
         const home = process.env.BATON_HOME ?? homedir();
+        // Not findProjectRoot: that settles on a home-folder repo and would index ~.
+        const root = await resolveExplainRoot(process.cwd(), home);
         const dirs = templateDirs(root, home);
         const where = { root, home, personalDir: dirs.personal };
 
@@ -120,8 +148,7 @@ export function registerExplain(program: Command): void {
           dirs,
           ...(opts.as !== undefined ? { template: opts.as } : {}),
         });
-        const text =
-          opts.format === "json" ? JSON.stringify(outcome, null, 2) : renderText(outcome);
+        const text = format === "json" ? JSON.stringify(outcome, null, 2) : renderText(outcome);
         process.stdout.write(`${text}\n`);
         if (outcome.status === "tie") process.exitCode = ExitCode.Blocked;
         else if (outcome.status === "none") process.exitCode = ExitCode.Error;

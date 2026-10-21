@@ -97,8 +97,13 @@ export async function makeFixture(): Promise<string> {
     "src/a/index.ts": "export const a = 1;\n",
     "src/b/index.ts": "export const b = 2;\n",
   });
-  await run("git", ["init", "-q"], { cwd: root });
-  await run("git", ["config", "core.autocrlf", "false"], { cwd: root });
+  await gitInit(root);
   await run("git", ["add", "-A"], { cwd: root });
   return root;
+}
+
+/** `git init` a repo at `root`, pinned to `core.autocrlf=false` so file bytes survive. */
+export async function gitInit(root: string): Promise<void> {
+  await run("git", ["init", "-q"], { cwd: root });
+  await run("git", ["config", "core.autocrlf", "false"], { cwd: root });
 }

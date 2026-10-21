@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { displayPath } from "../src/commands/explain.js";
 import { buildProgram } from "../src/program.js";
-import { makeFixture, makeTempDir } from "./helpers/explain-fixture.js";
+import { gitInit, makeFixture, makeTempDir } from "./helpers/explain-fixture.js";
 
 let out: string;
 let err: string;
@@ -123,6 +124,64 @@ describe("baton explain", () => {
     await run("explain", "-c", "x", "-p", "y", "--scope", "galaxy");
     expect(process.exitCode).toBe(1);
     expect(err).toContain("scope");
+  });
+
+  it("rejects options the mode would ignore, naming option and mode", async () => {
+    const cases: [string[], string][] = [
+      [["supabase", "-p", "keep it technical"], "--prompt does not apply to explain"],
+      [["--templates", "-p", "x"], "--prompt does not apply to --templates"],
+      [["--delete", "x", "-p", "y"], "--prompt does not apply to --delete"],
+      [["supabase", "-s", "project"], "--scope does not apply to explain"],
+      [["--templates", "--scope", "both"], "--scope does not apply to --templates"],
+      [["supabase", "--force"], "--force does not apply to explain"],
+      [["--delete", "x", "--force"], "--force does not apply to --delete"],
+      [["-c", "x", "-p", "y", "--as", "caveman"], "--as does not apply to --create"],
+      [["--delete", "x", "--as", "caveman"], "--as does not apply to --delete"],
+      [["--templates", "--format", "json"], "--format does not apply to --templates"],
+      [["-c", "x", "-p", "y", "--format", "json"], "--format does not apply to --create"],
+      [["--delete", "x", "--format", "text"], "--format does not apply to --delete"],
+    ];
+    for (const [args, message] of cases) {
+      err = "";
+      out = "";
+      process.exitCode = undefined;
+      await run("explain", ...args);
+      expect(process.exitCode, args.join(" ")).toBe(1);
+      expect(err, args.join(" ")).toContain(message);
+      expect(out, args.join(" ")).toBe("");
+    }
+    expect(existsSync(join(process.cwd(), ".context", "explain"))).toBe(false);
+  });
+
+  it("accepts the options that do apply to each mode", async () => {
+    await run("explain", "supabase", "--as", "caveman", "--format", "json");
+    expect(err).toBe("");
+    await run("explain", "-c", "ok", "-p", "Fine.", "-s", "project", "--force");
+    expect(err).toBe("");
+    await run("explain", "--delete", "ok", "-s", "project");
+    expect(err).toBe("");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("from a folder under a home-folder repo, explains that folder and never writes to home", async () => {
+    const home = process.env.BATON_HOME as string;
+    await gitInit(home);
+    const scratch = join(home, "scratch");
+    await mkdir(scratch);
+    await writeFile(join(scratch, "notes.txt"), "hello\n");
+    process.chdir(scratch);
+
+    await run("explain", "notes.txt", "--format", "json");
+    const outcome = JSON.parse(out);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.result.targets[0]).toMatchObject({ kind: "file", source: "notes.txt" });
+    expect(err).toBe("");
+
+    out = "";
+    await run("explain", "-c", "mine", "-p", "Be brief.");
+    expect(out).toBe("created .context/explain/mine.md\ncreated ~/.baton/explain/mine.md\n");
+    expect(existsSync(join(scratch, ".context", "explain", "mine.md"))).toBe(true);
+    expect(existsSync(join(home, ".context"))).toBe(false);
   });
 
   it("deletes a custom template and prints the removed paths", async () => {
