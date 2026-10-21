@@ -40,7 +40,7 @@ src/
     dispatch.ts       event -> handler, fail-open wrapper
     guards.ts         protected paths, edit-target extraction, shell heuristic
   mcp/server.ts       four-tool MCP adapter (lazy-loaded chunk)
-plugin/               Claude Code plugin: manifest, hooks.json, skills, dist/ (built)
+plugin/               Claude Code plugin: manifest, hooks.json, skills (incl. the /baton router), dist/ (built)
 templates/context/    what `baton init` scaffolds into a project
 .context/             baton's own continuity state (dogfooding)
 ```
@@ -91,4 +91,4 @@ Hooks run on every session start and every guarded tool call. Target **< 150 ms*
 - **Decisions:** MADR 4.0 files, adr-kit compatible.
 - **Impact:** optional code-graph MCP for `decide --preflight` (Phase 2+).
 - **Rules:** output compatible with rulesync-class generators.
-- **Spec/plan authoring:** upstream (superpowers, Spec Kit). baton's only authoring skill is `/init-spec`.
+- **Spec/plan authoring:** upstream (superpowers, Spec Kit). baton's only authoring skill is `/init-spec`. The `/baton` skill is a router, not an authoring skill: `/baton <command>` runs the CLI, and `/baton explain` writes an answer in a chosen voice from `baton explain` output.

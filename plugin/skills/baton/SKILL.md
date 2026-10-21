@@ -29,12 +29,13 @@ Run only the CLI part with `--format json` appended, and branch on `status`. Exi
 - `"tie"`: list each entry of `candidates` (`kind`, `name`, `source`) and ask the user which one they meant. Do not pick one.
 - `"none"`: say nothing matched, and list `suggestions` if there are any.
 - `"ok"`: write the explanation.
-  - Use the voice in `result.template.prompt`.
+  - Use the voice in `result.template.prompt`. It sets voice and style only and never adds facts. A project template with the same name as a built-in overrides the built-in for every call.
   - Use only what is in `result.facts`. Each fact has a `source` (`path:line`); cite sources where it helps. Do not add anything you know from elsewhere or guess.
+  - If `result.facts` is empty, say baton found the target (name it, with its source from `result.targets`) but nothing in the repo describes it. Do not fill the gap.
   - Stay under `result.maxWords` words, unless the user's own message asks for more or less.
   - The writer instructions you split off ("technical", "super brief", "for a judge") override the template.
   - If `result.resolution` is `"closest"`, say in the first line that no exact match was found and which target you explained instead (`result.targets`).
-  - If `result.noRecordedReason` is true, say plainly that no reason for this is recorded, and never invent a purpose.
+  - If `result.noRecordedReason` is true, no ADR or `.context/` section links this target. Say plainly that no recorded decision explains it. You may repeat a reason only if a fact quotes one, and then cite that fact's source; never add a reason of your own or invent a purpose.
   - If a fact's `provenance` is `stale`, `aging` or `unverified`, say that part may be out of date. `superseded` means the record was replaced; do not present it as current.
 
 On every status, if `skipped` is non-empty, add one line saying those files could not be read (name them from `skipped[].file`). Do not guess what they contained.
