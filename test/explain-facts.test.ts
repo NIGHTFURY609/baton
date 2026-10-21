@@ -8,7 +8,7 @@ import {
   MAX_LISTED,
 } from "../src/core/explain/facts.js";
 import { buildIndex, type RepoIndex, type Target } from "../src/core/explain/targets.js";
-import { makeFixture, writeFiles } from "./helpers/explain-fixture.js";
+import { makeFixture, makeTempDir, writeFiles } from "./helpers/explain-fixture.js";
 
 function pick(index: RepoIndex, kind: Target["kind"], name: string): Target {
   const t = index.targets.find((x) => x.kind === kind && x.name === name);
@@ -362,5 +362,48 @@ describe("collectFacts", () => {
     );
     const keys = both.facts.map((f) => `${f.source}|${f.label}`);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("a dependency is not backed by prose that only differs in case", async () => {
+    const root = await makeTempDir();
+    const adr = (body: string) =>
+      [
+        "---",
+        "id: adr-0002",
+        "kind: decision",
+        "status: accepted",
+        "verified_at: null",
+        "source_paths: []",
+        "spec_sections: []",
+        "---",
+        "# Config format",
+        "",
+        body,
+        "",
+      ].join("\n");
+    await writeFiles(root, {
+      "package.json": `${JSON.stringify({ dependencies: { yaml: "^2.0.0" } }, null, 2)}\n`,
+      ".context/decisions/0002-config.md": adr("Config uses a YAML flow mapping."),
+    });
+    const prose = await buildIndex(root);
+    const before = await collectFacts(prose, [pick(prose, "dependency", "yaml")], defaultConfig());
+    expect(before.facts.some((f) => f.label === "decision")).toBe(false);
+    expect(before.noRecordedReason).toBe(true);
+
+    await writeFiles(root, {
+      ".context/decisions/0002-config.md": adr("Config is parsed with `yaml`."),
+    });
+    const named = await buildIndex(root);
+    const after = await collectFacts(named, [pick(named, "dependency", "yaml")], defaultConfig());
+    expect(after.facts.some((f) => f.label === "decision")).toBe(true);
+    expect(after.noRecordedReason).toBe(false);
+
+    // Exact-case prose counts too; only a different case does not.
+    await writeFiles(root, {
+      ".context/decisions/0002-config.md": adr("The yaml package parses it."),
+    });
+    const exact = await buildIndex(root);
+    const same = await collectFacts(exact, [pick(exact, "dependency", "yaml")], defaultConfig());
+    expect(same.facts.some((f) => f.label === "decision")).toBe(true);
   });
 });

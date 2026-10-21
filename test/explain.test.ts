@@ -65,7 +65,7 @@ describe("explain", () => {
     const outcome = await explain(root, "vitest", { dirs: await emptyDirs() });
     expect(ok(outcome).noRecordedReason).toBe(true);
     expect(renderText(outcome)).toContain(
-      "WARNING no recorded reason: no ADR or .context section says why this exists. Say so plainly; do not invent a purpose.",
+      "WARNING no recorded reason: no ADR or .context section links this target. Repeat a reason only if a fact below states it, with its source; never invent one.",
     );
   });
 
@@ -141,10 +141,10 @@ describe("explain", () => {
 
   it("none outcome", async () => {
     const root = await makeFixture();
-    const outcome = await explain(root, "zzzzzz", { dirs: await emptyDirs() });
+    const outcome = await explain(root, "supabaseabcd", { dirs: await emptyDirs() });
     expect(outcome.status).toBe("none");
     const text = renderText(outcome);
-    expect(text).toContain('Nothing named "zzzzzz" found.');
+    expect(text).toContain('Nothing named "supabaseabcd" found.');
     if (outcome.status === "none") {
       expect(outcome.suggestions.length).toBeGreaterThan(0);
       expect(text).toContain(`Did you mean: ${outcome.suggestions.join(", ")}?`);
@@ -234,5 +234,95 @@ describe("explain", () => {
       true,
     );
     expect(result.noRecordedReason).toBe(true);
+  });
+
+  it("dogfood: hooks, handoff and tasks merge into one section-led answer", async () => {
+    const repo = fileURLToPath(new URL("..", import.meta.url));
+    const dirs = await emptyDirs();
+    for (const name of ["hooks", "handoff", "tasks"]) {
+      const outcome = await explain(repo, name, { dirs });
+      expect(outcome.status, name).toBe("ok");
+      const result = ok(outcome);
+      expect(result.resolution, name).toBe("exact");
+      expect(
+        result.targets.some((t) => t.kind === "section"),
+        name,
+      ).toBe(true);
+      expect(result.targets[0]?.kind, name).toBe("section");
+      expect(renderText(outcome).split("\n")[0], name).toMatch(/^# baton explain: /);
+    }
+  });
+
+  it("dogfood: a root file whose basename exists deeper resolves to the root file", async () => {
+    const repo = fileURLToPath(new URL("..", import.meta.url));
+    const result = ok(await explain(repo, "README.md", { dirs: await emptyDirs() }));
+    expect(result.targets.map((t) => t.source)).toEqual(["README.md"]);
+  });
+
+  it("a root file and a nested copy are each reachable by full path", async () => {
+    const root = await makeTempDir();
+    await writeFiles(root, { "README.md": "root\n", "templates/README.md": "nested\n" });
+    const dirs = await emptyDirs();
+    expect(ok(await explain(root, "README.md", { dirs })).targets.map((t) => t.name)).toEqual([
+      "README.md",
+    ]);
+    expect(
+      ok(await explain(root, "templates/README.md", { dirs })).targets.map((t) => t.name),
+    ).toEqual(["templates/README.md"]);
+    expect((await explain(root, "readme", { dirs })).status).not.toBe("ok");
+  });
+
+  it("the headline names the section, not the file the index lists first", async () => {
+    const root = await makeTempDir();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Handoff",
+        "<!-- baton: {id: handoff, kind: intent, verified_at: null, source_paths: []} -->",
+        "",
+        "Saves where the work stopped.",
+        "",
+      ].join("\n"),
+      "docs/design.md": "# Handoff\n\nThe design.\n",
+      "handoff/notes.txt": "x\n",
+    });
+    const outcome = await explain(root, "handoff", { dirs: await emptyDirs() });
+    const result = ok(outcome);
+    expect(result.targets.map((t) => t.kind)).toEqual(["section", "heading", "file"]);
+    expect(renderText(outcome).split("\n")[0]).toBe("# baton explain: Handoff");
+  });
+
+  it("decisions rank after sections and before dependencies in the target list", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      "package.json": `${JSON.stringify({ dependencies: { auth: "^1.0.0" } }, null, 2)}\n`,
+    });
+    const result = ok(await explain(root, "auth", { dirs: await emptyDirs() }));
+    expect(result.targets.map((t) => t.kind)).toEqual(["section", "dependency"]);
+  });
+
+  it("a malformed config.yaml falls back to defaults and is reported as skipped", async () => {
+    const dirs = await emptyDirs();
+    for (const bad of ["freshness: [unclosed\n", "freshness:\n  staleAfter: forever\n"]) {
+      const root = await makeFixture();
+      await writeFiles(root, { ".context/config.yaml": bad });
+      const outcome = await explain(root, "supabase", { dirs });
+      const result = ok(outcome);
+      expect(result.facts.length).toBeGreaterThan(0);
+      const entry = result.skipped.find((s) => s.file === ".context/config.yaml");
+      expect(entry, bad).toBeDefined();
+      expect(entry?.error).not.toBe("");
+      expect(entry?.error).not.toContain("\n");
+      expect(renderText(outcome)).toContain(
+        `WARNING skipped .context/config.yaml: ${entry?.error}`,
+      );
+    }
+  });
+
+  it("a healthy config.yaml adds nothing to skipped", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, { ".context/config.yaml": "version: 1\n" });
+    expect(ok(await explain(root, "supabase", { dirs: await emptyDirs() })).skipped).toEqual([]);
   });
 });

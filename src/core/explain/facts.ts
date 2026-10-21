@@ -92,12 +92,19 @@ function truncate(text: string): string {
 /** Characters that end a token besides whitespace and the text's ends. */
 const BOUNDARY = "`\"'()\\[\\],.:;";
 
-/** Whether `text` contains `name` as a case-insensitive whole token. */
-function mentions(text: string, name: string): boolean {
+/**
+ * Whether `text` contains `name` as a whole token, case-insensitively. With
+ * `strictCase` (dependency names, which are common words: `yaml`, `next`,
+ * `react`) a mention must match the case exactly, or be wrapped in backticks or
+ * quotes, so prose like "YAML flow mapping" does not back the package `yaml`.
+ */
+function mentions(text: string, name: string, strictCase = false): boolean {
   if (name === "") return false;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const edge = `[^\\s${BOUNDARY}]`;
-  return new RegExp(`(?<!${edge})${escaped}(?!${edge})`, "i").test(text);
+  const token = (flags: string) => new RegExp(`(?<!${edge})${escaped}(?!${edge})`, flags);
+  if (!strictCase) return token("i").test(text);
+  return token("").test(text) || new RegExp(`([\`"'])${escaped}\\1`, "i").test(text);
 }
 
 function basename(path: string): string {
@@ -121,7 +128,7 @@ class Collector {
         return [
           ...(await this.packageFact(target)),
           ...(await this.importFacts(target.name)),
-          ...(await this.mentionFacts(target.name, () => false)),
+          ...(await this.mentionFacts(target.name, () => false, true)),
         ];
       case "section":
         return [
@@ -340,9 +347,10 @@ class Collector {
   private async mentionFacts(
     name: string,
     byPath: (sourcePaths: string[]) => boolean,
+    strictCase = false,
   ): Promise<Fact[]> {
     const hit = (s: Section) =>
-      mentions(`${s.title}\n${s.body}`, name) || byPath(s.meta.sourcePaths);
+      mentions(`${s.title}\n${s.body}`, name, strictCase) || byPath(s.meta.sourcePaths);
     const facts: Fact[] = [];
     for (const d of this.index.decisions) {
       if (hit(d.section)) facts.push(await this.sectionFact(d.section, true));

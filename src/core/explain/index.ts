@@ -1,7 +1,15 @@
-import { loadConfig } from "../config.js";
+import { type Config, defaultConfig, loadConfig } from "../config.js";
+import { CONTEXT_DIR, ContextPaths } from "../paths.js";
 import { collectFacts, type Fact } from "./facts.js";
 import { matchTargets, toKey } from "./match.js";
-import { buildIndex, type SkippedFile, type Target, type TargetKind } from "./targets.js";
+import {
+  buildIndex,
+  type RepoIndex,
+  type SkippedFile,
+  skip,
+  type Target,
+  type TargetKind,
+} from "./targets.js";
 import {
   DEFAULT_TEMPLATE,
   resolveTemplate,
@@ -46,6 +54,42 @@ function ref(t: Target): TargetRef {
   return { kind: t.kind, name: t.name, source: t.source, line: t.line };
 }
 
+/** A schema error's message is a JSON dump; its first issue reads better as one line. */
+function readableConfigError(err: unknown): unknown {
+  if (typeof err !== "object" || err === null) return err;
+  const issue = (err as { issues?: { path?: unknown[]; message?: string }[] }).issues?.[0];
+  if (!issue) return err;
+  const where = issue.path?.length ? `${issue.path.join(".")}: ` : "";
+  return new Error(`${where}${issue.message ?? "invalid config"}`);
+}
+
+/**
+ * Merged matches in the order a reader expects the headline from: the spec or
+ * knowledge section first, then the ADRs, then dependencies, doc headings,
+ * diagram nodes and, last, files (which the index lists first).
+ */
+function byPriority(matches: Target[], index: RepoIndex): Target[] {
+  const decisions = new Set(index.decisions.map((d) => d.section));
+  const rank = (t: Target): number => {
+    switch (t.kind) {
+      case "section":
+        return decisions.has(t.section) ? 1 : 0;
+      case "dependency":
+        return 2;
+      case "heading":
+        return 3;
+      case "mermaid":
+        return 4;
+      case "file":
+        return 5;
+    }
+  };
+  return matches
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i)
+    .map(({ t }) => t);
+}
+
 export async function explain(
   root: string,
   query: string,
@@ -66,15 +110,24 @@ export async function explain(
     return { status: "none", query, suggestions: match.suggestions.map((t) => t.name), skipped };
   }
 
-  const config = await loadConfig(root);
-  const { facts, noRecordedReason } = await collectFacts(index, match.matches, config);
+  let config: Config;
+  try {
+    config = await loadConfig(root);
+  } catch (err) {
+    // A broken config must not turn every answer into a stack trace; explain only
+    // reads `freshness.staleAfter` from it, so the defaults are a fair stand-in.
+    config = defaultConfig();
+    skip(skipped, `${CONTEXT_DIR}/${ContextPaths.config}`, readableConfigError(err));
+  }
+  const targets = byPriority(match.matches, index);
+  const { facts, noRecordedReason } = await collectFacts(index, targets, config);
   return {
     status: "ok",
     skipped,
     result: {
       query,
       resolution: match.status,
-      targets: match.matches.map(ref),
+      targets: targets.map(ref),
       template,
       maxWords: DEFAULT_MAX_WORDS,
       facts,
@@ -128,7 +181,7 @@ export function renderText(outcome: ExplainOutcome): string {
   );
   if (result.noRecordedReason) {
     lines.push(
-      "WARNING no recorded reason: no ADR or .context section says why this exists. Say so plainly; do not invent a purpose.",
+      "WARNING no recorded reason: no ADR or .context section links this target. Repeat a reason only if a fact below states it, with its source; never invent one.",
     );
   }
   lines.push(...skippedLines(outcome.skipped), "", "## Facts");

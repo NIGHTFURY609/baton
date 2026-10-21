@@ -90,7 +90,7 @@ export async function makeFixture(): Promise<string> {
       "---",
       "# Use Supabase for auth",
       "",
-      "We use Supabase.",
+      "We use `supabase` for sign-in.",
       "",
     ].join("\n"),
     "docs/arch.md": ARCH_DOC,
