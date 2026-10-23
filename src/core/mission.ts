@@ -1,8 +1,13 @@
+import { basename } from "node:path";
 import { fitToBudget, PACKET_HEADER, type PacketBlock } from "./budget.js";
-import type { SectionFreshness } from "./drift.js";
+import type { Config } from "./config.js";
+import { evaluateFreshness, type SectionFreshness } from "./drift.js";
 import { BatonError } from "./errors.js";
 import { isInjectable } from "./freshness.js";
-import type { AdrInfo, IndexProblem } from "./sections.js";
+import { contextPath } from "./paths.js";
+import { type AdrInfo, type IndexProblem, loadSectionIndex } from "./sections.js";
+import { writeFileAtomic } from "./tasks/native/jsonl.js";
+import { getTask, readTaskSnapshot } from "./tasks/snapshot.js";
 import type { FreshnessLevel, Task } from "./types.js";
 
 /**
@@ -289,4 +294,71 @@ export function assemblePacket(inputs: PacketInputs, maxChars: number): MissionR
     withheld,
     taskIds: inputs.tasks.map((t) => t.id),
   };
+}
+
+export interface MissionOptions {
+  maxChars?: number;
+  taskId?: string;
+  now?: Date;
+}
+
+/** Gather the inputs from .context/, the task store and git, then assemble. Writes nothing. */
+export async function buildMission(
+  root: string,
+  config: Config,
+  opts: MissionOptions = {},
+): Promise<MissionResult> {
+  const index = await loadSectionIndex(root, { lenient: true });
+  const [report, snapshot] = await Promise.all([
+    evaluateFreshness(index, config),
+    readTaskSnapshot(root, config, { readyLimit: config.packet.maxTasks, closedLimit: 0 }),
+  ]);
+
+  let tasks: Task[];
+  if (opts.taskId !== undefined) {
+    const task = await getTask(root, config, opts.taskId);
+    if (task === null) throw new BatonError(`no task ${opts.taskId}`);
+    tasks = [task];
+  } else {
+    const seen = new Set<string>();
+    tasks = [];
+    for (const t of [...snapshot.inProgress, ...snapshot.ready]) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      tasks.push(t);
+    }
+    tasks = tasks.slice(0, config.packet.maxTasks);
+  }
+
+  return assemblePacket(
+    {
+      project: basename(root),
+      head: report.head,
+      generatedAt: (opts.now ?? new Date()).toISOString(),
+      sections: report.sections,
+      problems: index.problems,
+      tasks,
+      memories: snapshot.memories,
+    },
+    opts.maxChars ?? config.packet.maxChars,
+  );
+}
+
+/** Keep the last packet for `stats` and debugging: text and the full result. */
+export async function writePacketCache(root: string, result: MissionResult): Promise<void> {
+  writeFileAtomic(contextPath(root, ".cache", "last-packet.txt"), result.text);
+  writeFileAtomic(
+    contextPath(root, ".cache", "last-packet.json"),
+    `${JSON.stringify(result, null, 2)}\n`,
+  );
+}
+
+/** `--budget` value: an integer string from 1 to 10000, else the fallback when absent. */
+export function parseBudget(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 10000) {
+    throw new BatonError("budget must be an integer from 1 to 10000");
+  }
+  return n;
 }
