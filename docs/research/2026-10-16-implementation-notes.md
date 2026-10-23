@@ -28,6 +28,8 @@ Sources: [hooks reference](https://code.claude.com/docs/en/hooks) (the English p
 - **SessionStart context** is wrapped in a system reminder; docs advise **factual statements, not imperative commands**, because command-style text can trip prompt-injection defences. ✅ The packet is written as facts ("Active task: …", "Section X is aging: …").
 - **Execution:** all matching hooks run in parallel; default command timeout 600 s; `args` gives exec form without a shell. ✅ Exec form with `${CLAUDE_PLUGIN_ROOT}` inside `args` 🟡 — confirm in Phase 1 on Windows.
 - **Env:** `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT` (changes on every plugin update — never write state there), `CLAUDE_PLUGIN_DATA` (persists), `CLAUDE_ENV_FILE` (SessionStart). Plugin vars are **not** set inside the Bash tool. ✅
+- Windows PowerShell 5.1 prefixes a UTF-8 BOM when it pipes a string into a native command's stdin, so hook stdin parsing strips a leading BOM. 🟡 observed 2026-10-20 (Windows 11, PowerShell 5.1).
+- Process start on Windows 11 (Node 22.16), median of 7 runs: bare `node -e 0` 53 ms; `node dist/baton.mjs --version` 142 ms; the no-op `hook pre-tool-use` 144 ms; one `git log` about 55 ms. The 150 ms pre-tool-use budget has almost no headroom while the full CLI loads, hence the hook fast path (ADR 0015). 🟡 observed 2026-10-20.
 
 ## 2. Claude Code plugins
 
@@ -57,6 +59,9 @@ Sources: [.claude directory](https://code.claude.com/docs/en/claude-directory), 
 - **De-duplicate on `(message.id, requestId)`**: one API response is written as several lines (one per content block) repeating the same usage. ✅ (observed; ccusage does the same) — implemented in `src/core/transcript.ts`.
 - `tool_use` blocks live in assistant content; `tool_result` blocks in **user** records. ✅
 - Compaction: `type: "system", subtype: "compact_boundary"` with `compactMetadata`, and a user message with `isCompactSummary: true`. 🟡 Parse unknown types leniently.
+- Hook activity is written as `type: "attachment"` records. `attachment.type` is one of: `hook_additional_context` (`hookEvent`, plus `content: string[]` holding the additionalContext verbatim); `hook_success` (`hookName` such as `SessionStart:startup`, `command`, `stdout`, `stderr`, `exitCode`, `durationMs`); or `hook_non_blocking_error` (the same fields, for a non-zero exit). 🟡 observed in v2.1.301 transcripts, 2026-10-20.
+- The project folder name is the encoded cwd, with the drive-letter case of the session that created it. The main checkout's folder here is `n--coding-projects-a-skills` (created from VS Code, cwd `n:…`), although a CLI cwd encodes as `N--coding-projects-a-skills`. NTFS is case-insensitive, so a project has one folder, but its case may differ from `encodeProjectDir(cwd)`. Record `cwd` fields vary in the same way. `stats` and `handoff` match the folder case-insensitively on Windows. 🟡 observed 2026-10-20.
+- `Read` tool calls carry `input.file_path` as an absolute native path (backslashes on Windows). 🟡 observed.
 
 ## 5. Codex CLI and Gemini CLI
 
