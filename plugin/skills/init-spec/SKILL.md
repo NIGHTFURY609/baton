@@ -21,8 +21,8 @@ Goal: a short spec.md whose every section can be checked for freshness. Intent a
 
    - `id`: short kebab-case, unique across `.context/`.
    - `source_paths`: the globs whose changes could make the section wrong. Empty only for sections no code can contradict (purpose, non-goals).
-5. For every load-bearing choice the user states (storage, framework, auth model, hosting), run `baton decide "<title>" --status accepted --spec <section-ids>`.
-6. Show the user the spec, then run `baton verify-doc <ids...>` for the sections they confirm.
+5. For every load-bearing choice the user states (storage, framework, auth model, hosting), run `baton decide "<title>" --status accepted --spec <section-ids>`. Until Phase 2, `baton decide` exits 3 (not built yet). In that case, record each choice as a task instead, `baton task create "Decide: <title>" -t decision --spec <section-ids>`, so nothing is lost and no decision file is written by hand.
+6. Show the user the spec, then run `baton verify-doc <ids...>` for the sections they confirm. verify-doc stamps the current commit. If it reports `no commits yet`, ask the user to make a first commit.
 7. Run `baton drift` and report the result.
 
 ## Rules
