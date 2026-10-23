@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { loadConfig } from "../../src/core/config.js";
+import type { TaskService } from "../../src/core/tasks/native/service.js";
+import { openTaskService } from "../../src/core/tasks/native/store.js";
 
 // This machine's home folder (C:/Users/jeswi) is a git repo. Without a ceiling,
 // git run inside any temp dir would find it, and "no git" tests would see its
@@ -113,5 +116,20 @@ export function stampFixture(root: string, sha12: string): void {
     if (file === template) continue;
     const text = readFileSync(file, "utf8");
     writeFileSync(file, text.replaceAll("verified_at: null", `verified_at: "${sha12}"`));
+  }
+}
+
+/** Open the native task service for `root` as `actor`, run `fn`, and always close the db. */
+export async function withService<T>(
+  root: string,
+  actor: string,
+  fn: (s: TaskService) => T,
+): Promise<T> {
+  const config = await loadConfig(root);
+  const { service, db } = openTaskService(root, config, { actor });
+  try {
+    return await fn(service);
+  } finally {
+    db.close();
   }
 }
