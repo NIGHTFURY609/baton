@@ -37,6 +37,38 @@ describe("parseSections", () => {
   });
 });
 
+describe("parseSections nesting", () => {
+  const M = (id: string) => `<!-- baton: {id: ${id}, kind: intent} -->`;
+
+  it("keeps a marked section nested under another", () => {
+    const text = [
+      "## Authentication",
+      M("auth"),
+      "",
+      "Outer text.",
+      "",
+      "### Passkeys",
+      M("passkeys"),
+      "",
+      "Inner text.",
+      "",
+      "### Session lifetime",
+      "",
+      "Outer again.",
+      "",
+      "## Billing",
+      M("billing"),
+    ].join("\n");
+    const sections = parseSections(text, "x.md");
+    expect(sections.map((s) => s.meta.id)).toEqual(["auth", "passkeys", "billing"]);
+    expect(sections.map((s) => s.line)).toEqual([1, 6, 15]);
+    const [auth, passkeys] = sections;
+    expect(auth?.body).toBe("Outer text.\n\n### Session lifetime\n\nOuter again.");
+    expect(auth?.body).not.toContain("Inner text.");
+    expect(passkeys?.body).toBe("Inner text.");
+  });
+});
+
 describe("parseFrontmatter / parseFileSection", () => {
   it("returns the body untouched when there is no frontmatter", () => {
     expect(parseFrontmatter("# hi\n")).toEqual({ data: {}, body: "# hi\n" });

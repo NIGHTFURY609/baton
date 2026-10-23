@@ -72,42 +72,52 @@ export function parseFileSection(text: string, file: string): Section | null {
 
 /**
  * Parse every marked section in a multi-section file. A section runs from its
- * heading to the next heading of the same or higher level. Headings without a
- * marker are treated as plain structure and stay inside the enclosing section.
+ * heading to the next heading of the same or higher level, so an outer section
+ * spans its nested marked sections. Each line belongs to the innermost open
+ * marked section: a nested section's text is in its own body only, never in
+ * its parent's. Headings without a marker are plain text inside the innermost
+ * open section. Sections come back in document order.
  */
 export function parseSections(text: string, file: string): Section[] {
   const lines = text.split(/\r?\n/);
   const sections: Section[] = [];
-  let open: { section: Section; level: number; bodyStart: number } | null = null;
+  const open: { section: Section; level: number; collected: string[] }[] = [];
 
-  const close = (end: number) => {
-    if (!open) return;
-    open.section.body = lines.slice(open.bodyStart, end).join("\n").trim();
-    sections.push(open.section);
-    open = null;
+  const closeFrom = (level: number) => {
+    while (open.length > 0 && (open[open.length - 1]?.level ?? 0) >= level) {
+      const done = open.pop();
+      if (!done) break;
+      done.section.body = done.collected.join("\n").trim();
+      sections.push(done.section);
+    }
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const h = HEADING_RE.exec(lines[i] ?? "");
-    if (!h) continue;
-    const level = (h[1] ?? "#").length;
-    if (open && level <= open.level) close(i);
-
-    const markerLine = lines[i + 1] ?? "";
-    const marker = MARKER_RE.exec(markerLine.trim());
-    if (!marker) continue;
-    const raw = parse(marker[1] ?? "{}");
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      throw new Error(`${file}:${i + 2}: baton marker must be a YAML mapping`);
+    const line = lines[i] ?? "";
+    const h = HEADING_RE.exec(line);
+    if (h) {
+      const level = (h[1] ?? "#").length;
+      closeFrom(level);
+      const marker = MARKER_RE.exec((lines[i + 1] ?? "").trim());
+      if (marker) {
+        const raw = parse(marker[1] ?? "{}");
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+          throw new Error(`${file}:${i + 2}: baton marker must be a YAML mapping`);
+        }
+        const meta = toSectionMeta(raw as Record<string, unknown>, `${file}:${i + 2}`);
+        open.push({
+          section: { meta, title: h[2] ?? meta.id, body: "", file, line: i + 1 },
+          level,
+          collected: [],
+        });
+        i++; // the marker line is not body
+        continue;
+      }
     }
-    const meta = toSectionMeta(raw as Record<string, unknown>, `${file}:${i + 2}`);
-    open = {
-      section: { meta, title: h[2] ?? meta.id, body: "", file, line: i + 1 },
-      level,
-      bodyStart: i + 2,
-    };
+    open[open.length - 1]?.collected.push(line);
   }
-  close(lines.length);
+  closeFrom(0);
+  sections.sort((a, b) => a.line - b.line);
 
   const seen = new Set<string>();
   for (const s of sections) {
