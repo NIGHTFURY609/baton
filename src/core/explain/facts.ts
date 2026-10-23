@@ -5,7 +5,14 @@ import { classifyFreshness } from "../freshness.js";
 import { matchesAny } from "../glob.js";
 import { CONTEXT_DIR } from "../paths.js";
 import type { FreshnessLevel, Section } from "../types.js";
-import { findFences, headingTargets, type RepoIndex, readLines, type Target } from "./targets.js";
+import {
+  findFences,
+  headingTargets,
+  type RepoIndex,
+  readLines,
+  skip,
+  type Target,
+} from "./targets.js";
 
 /**
  * The evidence `baton explain` answers from: literal facts read out of the repo,
@@ -169,7 +176,19 @@ class Collector {
         sections: [...this.index.contextSections, ...this.index.decisions.map((d) => d.section)],
       },
       this.config,
-    ).then((r) => new Map(r.sections.map((f) => [key(f.section), f.result.level])));
+    )
+      .then((r) => new Map(r.sections.map((f) => [key(f.section), f.result.level])))
+      .catch((err: unknown) => {
+        // A git failure (corrupt index, oversized output) must not sink the answer:
+        // report it and fall back to the frontmatter-only label below.
+        const message = err instanceof Error ? err.message : String(err);
+        skip(
+          this.index.skipped,
+          "<root>",
+          new Error(`freshness unavailable: ${message.split("\n")[0]?.trim() || "unknown error"}`),
+        );
+        return new Map<string, FreshnessLevel>();
+      });
     return (
       (await this.freshness).get(key(section)) ??
       classifyFreshness({ meta: section.meta, commitsSince: 0 }, this.config.freshness.staleAfter)
