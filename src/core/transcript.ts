@@ -289,33 +289,50 @@ function redactHead(head: string): string {
         "$1[redacted]@",
       )
       .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
+      // openssl pass-phrase syntax (`-passin pass:SECRET`, `-pass pass:SECRET`, ...). `env:` and
+      // `file:` name where the secret lives, not the secret, and are kept.
+      .replace(/\bpass:\S+/g, "pass:[redacted]")
       // `mysql -pSECRET` and `mysql -p"my secret"` (attached), `docker login -p SECRET` (separate).
       // Port maps, `mkdir -pv` and the like are left alone. A bare `-password`, `-passwd`,
-      // `-passphrase`, `-pass`, `-pw` or `-pwd` flag is left to the flag rule below, which redacts
-      // the value after it.
-      .replace(/(?<![\w-])(-p)(?:"[^"]*"|'[^']*')/g, "$1[redacted]")
+      // `-passphrase`, `-passin`, `-passout`, `-pass`, `-pw` or `-pwd` flag is left to the flag
+      // rule below, which redacts the value after it. An unclosed quote runs to the end of the text.
+      .replace(/(?<![\w-])(-p)(?:"[^"]*(?:"|$)|'[^']*(?:'|$))/g, "$1[redacted]")
+      .replace(/(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))[^\s-]\S{3,}/g, (m, flag: string) =>
+        /^-p(?:ass(?:word|wd|phrase|in|out)?|wd?)(?:[^\w-]|$)/i.test(m) ? m : `${flag}[redacted]`,
+      )
       .replace(
-        /(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))(?!(?:ass(?:word|wd|phrase)?|wd?)(?![\w-]))[^\s-]\S{3,}/g,
+        /(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g,
         "$1[redacted]",
       )
-      .replace(/(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*"|'[^']*'|\S+)/g, "$1[redacted]")
+      // Capital `-P` is a password only for these: `zip -P SECRET`, `unzip -P SECRET`, `7z a -P SECRET`.
+      .replace(
+        /(\b(?:zip|unzip|7z|7za|7zr)\b[^\n]*?\s-P\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g,
+        "$1[redacted]",
+      )
+      // `openssl enc -k SECRET`
+      .replace(/(\bopenssl\b[^\n]*?\s-k\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g, "$1[redacted]")
+      // PowerShell: `-Password (ConvertTo-SecureString 'SECRET' -AsPlainText -Force)`
+      .replace(
+        /(\bConvertTo-SecureString\s+(?:-String\s+)?)("[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s)]+)/gi,
+        "$1[redacted]",
+      )
       // Each [\w-] run is bounded so a long run of dashes cannot go quadratic.
       .replace(
-        /(?<![\w-])(--?[\w-]{0,64}?(?:password|passwd|passphrase|storepass|keypass|secret|token|api[_-]?key)[\w-]{0,64}|-(?:-(?:auth|credentials?)|-?(?:pass|pw|pwd))(?![\w-]))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+        /(?<![\w-])(--?[\w-]{0,64}?(?:password|passwd|passphrase|passin|passout|storepass|keypass|secret|token|api[_-]?key)[\w-]{0,64}|-(?:-(?:auth|credentials?)|-?(?:pass|pw|pwd))(?![\w-]))(\s+|=)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi,
         "$1$2[redacted]",
       )
       // `aws configure set aws_secret_access_key VALUE`: a space, not "=", before the value.
       .replace(
-        /(\b(?:set|config|configure)\s+(?:--?[\w-]+\s+){0,4}[\w.:/-]{0,64}(?:secret_access_key|password|passwd|secret|token)[\w.:/-]{0,64}\s+)("[^"]*"|'[^']*'|\S+)/gi,
+        /(\b(?:set|config|configure)\s+(?:--?[\w-]+\s+){0,4}[\w.:/-]{0,64}(?:secret_access_key|password|passwd|secret|token)[\w.:/-]{0,64}\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi,
         "$1[redacted]",
       )
       // netrc: `machine h login u password SECRET`
       .replace(
-        /(\blogin\s+\S{1,64}\s+(?:password|passwd)\s+)("[^"]*"|'[^']*'|[^\s'"]+)/gi,
+        /(\blogin\s+\S{1,64}\s+(?:password|passwd)\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s'"]+)/gi,
         "$1[redacted]",
       )
       .replace(
-        /(?<!\$)\b([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
+        /(?<!\$)\b([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi,
         "$1$2=[redacted]",
       )
   );

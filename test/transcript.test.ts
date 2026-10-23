@@ -252,6 +252,26 @@ describe("redactSecrets", () => {
     ["tool -pwd hunter2", ["hunter2"]],
     ["tool -pw=hunter2", ["hunter2"]],
     ["openssl enc -pass hunter2", ["hunter2"]],
+    ["openssl rsa -in k.pem -passin pass:hunter2", ["hunter2"]],
+    ["openssl pkcs12 -export -passout pass:hunter2 -out a.p12", ["hunter2"]],
+    ["openssl smime -sign -passin pass:hunter2 -in m", ["hunter2"]],
+    ["openssl enc -aes256 -pass pass:hunter2 -in f", ["hunter2"]],
+    ["openssl enc -aes256 -k hunter2 -in f", ["hunter2"]],
+    ["mysql -pAssword hunter2", ["hunter2"]],
+    ['mysql -p"alpha bravo charlie', ["alpha", "bravo", "charlie"]],
+    ["mysql -p'alpha bravo charlie", ["alpha", "bravo", "charlie"]],
+    ['tool --password "alpha bravo charlie', ["alpha", "bravo", "charlie"]],
+    ["zip -r out.zip src -P hunter2", ["hunter2"]],
+    ["unzip -P hunter2 out.zip", ["hunter2"]],
+    ["7z a -P hunter2 out.7z src", ["hunter2"]],
+    [
+      "New-Object PSCredential 'u', (ConvertTo-SecureString 'hunter2' -AsPlainText -Force)",
+      ["hunter2"],
+    ],
+    [
+      "tool -Password (ConvertTo-SecureString 'hunter2' -AsPlainText -Force)",
+      ["hunter2", "SecureString 'h"],
+    ],
     ['mysql -p"my secret" db', ["my secret", "secret"]],
     ["mysql -p'my secret' db", ["my secret", "secret"]],
   ])("redacts the secret in %s", (input, secrets) => {
@@ -286,6 +306,13 @@ describe("redactSecrets", () => {
       "git clone https://github.com/o/r.git",
     );
     expect(redactSecrets("jest --passWithNoTests")).toBe("jest --passWithNoTests");
+    expect(redactSecrets("git log -p")).toBe("git log -p");
+    expect(redactSecrets("scp -P 2222 f h:")).toBe("scp -P 2222 f h:");
+    expect(redactSecrets("openssl enc -kfile k.bin -in f")).toBe("openssl enc -kfile k.bin -in f");
+    expect(redactSecrets("openssl x509 -in c.pem -noout")).toBe("openssl x509 -in c.pem -noout");
+    // Known gap, accepted: a password that starts with digits and then "/" reads as a port, the
+    // same shape as the legitimate `localhost:5173/@vite/client`. Pinned so a change is noticed.
+    expect(redactSecrets("https://u:1234/abcd@host")).toBe("https://u:1234/abcd@host");
     expect(redactSecrets("pwd")).toBe("pwd");
     expect(redactSecrets("cd src && pwd | cat")).toBe("cd src && pwd | cat");
   });
@@ -331,6 +358,11 @@ describe("redactSecrets", () => {
     );
     expect(out).not.toContain("ghp_");
     expect(out).toContain("f.txt");
+    // A quote the cut leaves open still hides everything after it.
+    const open = redactSecrets(
+      `${"a ".repeat(500)}mysql -p"alpha bravo charlie delta echo foxtrot`,
+    );
+    for (const word of ["alpha", "bravo", "charlie", "delta"]) expect(open).not.toContain(word);
     // The token the cut lands in is dropped whole, with the space before it.
     expect(redactSecrets(`${"y".repeat(1023)} tail`)).toBe(`${"y".repeat(1023)}…`);
   });
