@@ -113,6 +113,14 @@ export interface AdrDraft {
   moreInformation: { summary: string; items: string[] };
 }
 
+/** A name safe to write as an unquoted YAML flow scalar that stays the same string. */
+function isPlainName(name: string): boolean {
+  return (
+    /^[A-Za-z](?:[A-Za-z0-9._ -]*[A-Za-z0-9._])?$/.test(name) &&
+    !/^(?:null|true|false|yes|no|on|off|~)$/i.test(name)
+  );
+}
+
 function oneLine(label: string, value: string): string {
   if (value.includes("\n")) throw new BatonError(`${label} must be a single line`);
   return value;
@@ -126,9 +134,7 @@ function bullets(label: string, items: string[]): string {
 export function renderAdr(d: AdrDraft): string {
   const title = oneLine("title", d.title);
   const proposed = d.status === "proposed";
-  const deciders = d.deciders
-    .map((n) => (/^[A-Za-z0-9._ -]+$/.test(n) ? n : JSON.stringify(n)))
-    .join(", ");
+  const deciders = d.deciders.map((n) => (isPlainName(n) ? n : JSON.stringify(n))).join(", ");
   const front = [
     `id: ${adrId(d.number)}`,
     "kind: decision",

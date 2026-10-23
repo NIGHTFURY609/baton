@@ -163,6 +163,13 @@ describe("renderAdr", () => {
     expect(parseFrontmatter(text).data["decision-makers"]).toEqual(["a@b.c", "ok"]);
   });
 
+  it("round-trips decision-makers that YAML would otherwise reinterpret", () => {
+    const names = ["null", "609", "- x", "1e3", ".inf", "Jane ", "Jane Doe", "x"];
+    const text = renderAdr({ ...MINIMAL, deciders: names });
+    expect(parseFrontmatter(text).data["decision-makers"]).toEqual(names);
+    expect(text).toContain('["null", "609", "- x", "1e3", ".inf", "Jane ", Jane Doe, x]');
+  });
+
   it("rejects multi-line titles", () => {
     expect(() => renderAdr({ ...MINIMAL, title: "a\nb" })).toThrow(BatonError);
     try {
