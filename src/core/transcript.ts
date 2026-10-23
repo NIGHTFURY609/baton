@@ -251,28 +251,55 @@ export function redactSecrets(text: string): string {
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
     .replace(/\b(Authorization\s*[:=]\s*)(token|bearer|basic)\s+\S+/gi, "$1$2 [redacted]")
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[redacted]@")
-    .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]+)([^\s:]+):\S+/gi, "$1$2:[redacted]")
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]*:[^\s/@]+@/gi, "$1[redacted]@")
+    .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]+):\S+/gi, "$1$2:[redacted]")
     .replace(
       /(--?[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*)(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
       "$1$2[redacted]",
     )
     .replace(
-      /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
+      /(?<!\$)\b([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
       "$1$2=[redacted]",
     );
 }
 
 const MAX_ARG = 80;
 
-/** Windows drive paths, and POSIX paths under a home-like folder, inside free text. */
-const ABSOLUTE_PATH_TOKEN =
-  /(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s"'`<>|;&()]+|(?<![\w.:~/-])\/(?:home|Users|root)\/[^\s"'`<>|;&()]+/g;
+const PATH_REST = "[^\\s\"'`<>|;&()]+";
+/**
+ * Absolute paths inside free text: Windows drive (`C:\x`, `C:/x`), `file://`,
+ * UNC (`\\host\x`, `//host/x`), WSL (`/mnt/c/x`), Git Bash (`/c/x`) and POSIX
+ * home-like folders. The lookbehinds skip ordinary URLs such as `https://h/home/x`.
+ */
+const ABSOLUTE_PATH_TOKEN = new RegExp(
+  [
+    `(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/]${PATH_REST}`,
+    `(?<![\\w.~/\\\\-])file:\\/\\/${PATH_REST}`,
+    `(?<![\\w.:~/\\\\-])(?:\\\\\\\\|\\/\\/)[^\\s\\\\/"'\`<>|;&()]+[\\\\/]${PATH_REST}`,
+    `(?<![\\w.:~/\\\\-])\\/mnt\\/[A-Za-z]\\/${PATH_REST}`,
+    `(?<![\\w.:~/\\\\-])\\/[A-Za-z]\\/${PATH_REST}`,
+    `(?<![\\w.:~/\\\\-])\\/(?:home|Users|root)\\/${PATH_REST}`,
+  ].join("|"),
+  "g",
+);
+
+/** Normalise a matched path token and shorten it like a path argument. */
+function shortenPathToken(tok: string, root: string, platform: NodeJS.Platform): string {
+  let p = tok.replace(/\\/g, "/");
+  if (p.startsWith("file://")) {
+    p = p.slice("file://".length).replace(/^\/+(?=[A-Za-z]:)/, "");
+    if (!/^[A-Za-z]:\//.test(p)) p = `/${p.replace(/^\/+/, "")}`;
+  } else if (platform === "win32") {
+    // Git Bash `/c/x` and WSL `/mnt/c/x` name the drive `c:`.
+    p = p.replace(/^(?:\/mnt)?\/([A-Za-z])\//, "$1:/");
+  }
+  return shownPath(p, root, platform);
+}
 
 /** Redact, optionally shorten out-of-repo absolute paths in free text, then cut to 80 chars. */
 function bounded(text: string, root: string, platform: NodeJS.Platform, paths = false): string {
   let s = redactSecrets(text);
-  if (paths) s = s.replace(ABSOLUTE_PATH_TOKEN, (tok) => shownPath(tok, root, platform));
+  if (paths) s = s.replace(ABSOLUTE_PATH_TOKEN, (tok) => shortenPathToken(tok, root, platform));
   return s.length > MAX_ARG ? `${s.slice(0, MAX_ARG)}…` : s;
 }
 
@@ -313,7 +340,7 @@ export function summarizeToolUse(
     line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern, root, platform, true)}`;
   } else if (t.name === "Task" || t.name === "Agent") {
     const d = str(t.input.description);
-    line = d === undefined ? t.name : `${t.name}: ${bounded(d, root, platform)}`;
+    line = d === undefined ? t.name : `${t.name}: ${bounded(d, root, platform, true)}`;
   } else {
     line = t.name;
   }

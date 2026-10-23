@@ -210,10 +210,18 @@ describe("redactSecrets", () => {
     ["curl -H 'Authorization: token abcdef123456'", "abcdef123456"],
     ["Authorization: Bearer abcdef123456", "abcdef123456"],
     ["Authorization: basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+    ["redis-cli -u redis://:sup3rsecret@host:6379", "sup3rsecret"],
+    ["curl -uuser:pass1234 https://example.com", "pass1234"],
+    ["MYSQL_PWD=hunter2 mysql -h db", "hunter2"],
   ])("redacts %s", (input, secret) => {
     const out = redactSecrets(input);
     expect(out).not.toContain(secret);
     expect(out).toContain("[redacted]");
+  });
+
+  it("does not mistake the working directory for a password", () => {
+    expect(redactSecrets("cd $PWD && pwd")).toBe("cd $PWD && pwd");
+    expect(redactSecrets("echo $PWD: here")).toBe("echo $PWD: here");
   });
 
   it("keeps the non-secret parts of redacted commands", () => {
@@ -258,6 +266,39 @@ describe("absolute paths inside Bash, Glob and Grep arguments", () => {
     );
     expect(summary("Glob", { pattern: "C:\\Users\\jeswi\\docs\\*.md" }, "/w", "linux")).toBe(
       "Glob …/*.md",
+    );
+  });
+
+  it.each([
+    ["cd /c/Users/jeswi/.ssh && cat id_rsa", "cd …/.ssh && cat id_rsa"],
+    ["ls /mnt/c/Users/jeswi/x", "ls …/x"],
+    ["type \\\\fileserver\\share\\jeswi\\secrets.txt", "type …/secrets.txt"],
+    ["cat //fileserver/share/jeswi/secrets.txt", "cat …/secrets.txt"],
+    ["cat file:///home/alice/x", "cat …/x"],
+    ["cat file:///C:/Users/jeswi/x", "cat …/x"],
+  ])("shortens %s on both platforms", (command, expected) => {
+    for (const platform of ["win32", "linux"] as const) {
+      const out = summary("Bash", { command }, "c:\\work\\demo", platform);
+      expect(out).toBe(`Bash: ${expected}`);
+      expect(out).not.toMatch(/jeswi|alice|fileserver/);
+    }
+  });
+
+  it("resolves Git Bash and WSL drive paths against the root on Windows", () => {
+    expect(
+      summary("Bash", { command: "cat /c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Bash: cat src/a.ts");
+    expect(
+      summary("Bash", { command: "cat /mnt/c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Bash: cat src/a.ts");
+  });
+
+  it("shortens paths in Task and Agent descriptions", () => {
+    expect(summary("Task", { description: "read C:\\Users\\jeswi\\x.txt" }, "/w", "linux")).toBe(
+      "Task: read …/x.txt",
+    );
+    expect(summary("Agent", { description: "see /home/alice/notes" }, "/w", "linux")).toBe(
+      "Agent: see …/notes",
     );
   });
 
