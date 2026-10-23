@@ -160,3 +160,22 @@ describe("supersededByFromStatus", () => {
     expect(supersededByFromStatus("accepted")).toBeUndefined();
   });
 });
+
+describe("supersede chain", () => {
+  const adr3 = (status: string) => ({
+    ...CONTEXT_FIXTURE,
+    ".context/decisions/0003-sessions.md": `---\nid: adr-0003\nkind: decision\nstatus: ${status}\nsupersedes: "0001"\nspec_sections: [auth]\n---\n# Sessions\n`,
+  });
+
+  it("an accepted successor marks its target superseded", async () => {
+    const idx = await loadSectionIndex(makeRepo(adr3("accepted"), { git: false }));
+    expect(idx.byId.get("adr-0001")?.meta.supersededBy).toBe("adr-0003");
+    expect(idx.byId.get("adr-0002")?.meta.supersededBy).toBe("adr-0001");
+  });
+
+  it("a proposed successor marks nothing", async () => {
+    const idx = await loadSectionIndex(makeRepo(adr3("proposed"), { git: false }));
+    expect(idx.byId.get("adr-0001")?.meta.supersededBy).toBeUndefined();
+    expect(idx.byId.get("adr-0002")?.meta.supersededBy).toBe("adr-0001");
+  });
+});
