@@ -54,7 +54,7 @@ Work items live in a structured task store: by default baton's own, ported from 
 ## Decisions
 <!-- baton: {id: decisions, kind: intent, verified_at: null, source_paths: ["src/core/decisions.ts", "src/commands/decide.ts"]} -->
 
-MADR 4.0 records in `.context/decisions/`, append-only, superseded never edited (ADR 0001). `decide --preflight` checks a proposed change against accepted decisions and the spec before it lands.
+MADR 4.0 records, append-only: bodies never change once accepted; only `baton decide` rewrites a status line and `verify-doc` a `verified_at` (ADR 0018). `decide --preflight` checks a proposed change against accepted decisions and the spec before it lands.
 
 ## Measurement
 <!-- baton: {id: measurement, kind: intent, verified_at: "428730e2882f", source_paths: ["src/core/transcript.ts", "src/core/stats.ts", "src/commands/stats.ts"]} -->
