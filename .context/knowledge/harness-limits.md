@@ -1,7 +1,7 @@
 ---
 id: knowledge-harness-limits
 kind: knowledge
-verified_at: null
+verified_at: "428730e2882f"
 source_paths: [plugin/hooks/**, src/hooks/**]
 ---
 # Harness limits that bite

@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-20
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "428730e2882f"
 source_paths: [src/core/init.ts, src/core/templates.generated.ts, scripts/embed-templates.mjs, templates/**, src/commands/init.ts]
 spec_sections: [context-format]
 ---

@@ -3,7 +3,7 @@
 `baton compile` will regenerate AGENTS.md from this file (Phase 2). Until then, edit both by hand and keep them identical in substance.
 
 ## Project rules
-<!-- baton: {id: rules-project, kind: rule, verified_at: null, source_paths: [package.json, tsconfig.json, biome.json]} -->
+<!-- baton: {id: rules-project, kind: rule, verified_at: "428730e2882f", source_paths: [package.json, tsconfig.json, biome.json]} -->
 
 - TypeScript, Node ≥ 22.13 (for `node:sqlite`), ESM. `npm run check` (lint, typecheck, test) must pass before a task is done.
 - `src/core/` holds pure logic and small IO wrappers; it never imports from `commands/`, `hooks/` or `mcp/`.
@@ -13,7 +13,7 @@
 - Skills use Agent Skills spec keys only; run `npm run validate:skills`.
 
 ## Continuity rules
-<!-- baton: {id: rules-continuity, kind: rule, verified_at: null, source_paths: [".context/**"]} -->
+<!-- baton: {id: rules-continuity, kind: rule, verified_at: "428730e2882f", source_paths: [".context/**"]} -->
 
 - Do not edit `.context/STATE.md` or files in `.context/decisions/` directly; STATE is generated, ADRs are append-only (supersede with a new record).
 - Load-bearing choices (dependencies, storage formats, hook semantics) get an ADR before code.
