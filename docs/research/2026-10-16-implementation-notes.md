@@ -113,4 +113,4 @@ Not re-verified: drift-ai and bettermemory did not resolve to identifiable curre
 ## 10. Node and git behaviour that verify relies on
 
 - `child_process.spawn(command, { shell: true })` runs `cmd.exe /d /s /c` on Windows and `/bin/sh -c` elsewhere, so a `check:` label runs in the platform shell. ✅ [Node child_process docs](https://nodejs.org/api/child_process.html#shell-requirements). → ADR 0019
-- `git log --since=<n>` reads a number of 9 or more digits as Unix seconds (git `date.c`, `match_digit`). baton passes whole seconds and keeps only commits whose `%ct` is strictly greater than the start second. 🟡 not yet observed; the `changedFilesSince` test in `test/verify-core.test.ts` will check it.
+- `git log --since=<n>` reads a number of 9 or more digits as Unix seconds (git `date.c`, `match_digit`). baton passes whole seconds and keeps only commits whose `%ct` is strictly greater than the start second. 🟡 observed: the `changedFilesSince` test in `test/verify-core.test.ts` passed on 2026-10-24.

@@ -166,3 +166,39 @@ export function porcelainPath(line: string): string {
   if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
   return path;
 }
+
+/**
+ * Files changed by each non-merge commit made strictly after the second of
+ * `sinceIso`, newest commit first. git stores whole-second committer times, so a
+ * commit made in the same second as the start (a fixture's first commit, the
+ * previous task's commit) is not part of the result. No HEAD (no commit yet, or
+ * not a repo) gives []. An unparseable date rejects; so does a git failure inside
+ * a repo.
+ */
+export async function changedFilesSince(cwd: string, sinceIso: string): Promise<string[][]> {
+  if ((await headSha(cwd)) === null) return [];
+  const since = Math.floor(Date.parse(sinceIso) / 1000);
+  if (Number.isNaN(since)) throw new Error(`bad since: ${sinceIso}`);
+  const out = await git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "log",
+      "--no-merges",
+      "--no-renames",
+      "--name-only",
+      "--format=%x00%H %ct",
+      `--since=${since}`,
+      "--end-of-options",
+      "HEAD",
+    ],
+    cwd,
+  );
+  const result: string[][] = [];
+  for (const chunk of out.split("\0").slice(1)) {
+    const [head = "", ...files] = chunk.split("\n");
+    if (!(Number(head.split(" ")[1]) > since)) continue;
+    result.push(files.filter((line) => line !== ""));
+  }
+  return result;
+}
