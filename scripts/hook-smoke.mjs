@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
+const HANDOFF_MARKER = "generated_by: baton handoff";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 
@@ -110,6 +111,13 @@ function main() {
       shell: false,
     });
     if (init.status !== 0) throw new Error(`baton init --no-hooks failed: ${init.stderr}`);
+    const stateFile = join(project, ".context", "STATE.md");
+    const initState = readFileSync(stateFile, "utf8");
+    if (initState.includes(HANDOFF_MARKER)) {
+      throw new Error(
+        "STATE.md has the handoff marker after init; the write check would prove nothing",
+      );
+    }
     mkdirSync(join(project, "src"));
     writeFileSync(join(project, "src", "a.ts"), "export const a = 1;\n");
     git(project, "add", "-A");
@@ -170,7 +178,10 @@ function main() {
         const times = [];
         const label = `${event} (${argv[argv.length - 1]})`;
         let last;
+        const writes = event === "PreCompact" || event === "SessionEnd";
         for (let i = 0; i < runs; i++) {
+          // Put the post-init STATE.md back so each run must write it itself.
+          if (writes) writeFileSync(stateFile, initState);
           const t0 = performance.now();
           last = spawnSync(argv[0], argv.slice(1), {
             cwd: project,
@@ -189,6 +200,9 @@ function main() {
             fail(`${label} [${root}] run ${i + 1}: status ${last.status} ${last.error ?? ""}`);
           if (last.stderr !== "")
             fail(`${label} [${root}] run ${i + 1}: stderr ${JSON.stringify(last.stderr)}`);
+          if (writes && !readFileSync(stateFile, "utf8").includes(HANDOFF_MARKER)) {
+            fail(`${label} [${root}] run ${i + 1}: STATE.md lacks "${HANDOFF_MARKER}"`);
+          }
         }
         const out = last.stdout ?? "";
         if (event === "SessionStart") {
@@ -211,13 +225,6 @@ function main() {
             fail(
               `${label} [${root}]: expected empty stdout, got ${JSON.stringify(out.slice(0, 80))}`,
             );
-          if (event === "PreCompact" || event === "SessionEnd") {
-            const state = join(project, ".context", "STATE.md");
-            const text = existsSync(state) ? readFileSync(state, "utf8") : "";
-            if (!text.includes("generated_by: baton handoff")) {
-              fail(`${label} [${root}]: STATE.md lacks "generated_by: baton handoff"`);
-            }
-          }
         }
         rows.push({ check: event, root, ms: median(times), budget: budgetFor(event) });
       }
