@@ -290,17 +290,18 @@ function redactHead(head: string): string {
       )
       .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
       // `mysql -pSECRET` and `mysql -p"my secret"` (attached), `docker login -p SECRET` (separate).
-      // Port maps, `mkdir -pv` and the like are left alone. A bare `-password` / `-passwd` flag
-      // is left to the flag rule below, which redacts the value after it.
+      // Port maps, `mkdir -pv` and the like are left alone. A bare `-password`, `-passwd`,
+      // `-passphrase`, `-pass`, `-pw` or `-pwd` flag is left to the flag rule below, which redacts
+      // the value after it.
       .replace(/(?<![\w-])(-p)(?:"[^"]*"|'[^']*')/g, "$1[redacted]")
       .replace(
-        /(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))(?!ass(?:word|wd)(?![\w-]))[^\s-]\S{3,}/g,
+        /(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))(?!(?:ass(?:word|wd|phrase)?|wd?)(?![\w-]))[^\s-]\S{3,}/g,
         "$1[redacted]",
       )
       .replace(/(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*"|'[^']*'|\S+)/g, "$1[redacted]")
       // Each [\w-] run is bounded so a long run of dashes cannot go quadratic.
       .replace(
-        /(?<![\w-])(--?[\w-]{0,64}?(?:password|passwd|secret|token|api[_-]?key)[\w-]{0,64}|--(?:pass|pw|pwd|auth|credentials?)(?![\w-]))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+        /(?<![\w-])(--?[\w-]{0,64}?(?:password|passwd|passphrase|storepass|keypass|secret|token|api[_-]?key)[\w-]{0,64}|-(?:-(?:auth|credentials?)|-?(?:pass|pw|pwd))(?![\w-]))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
         "$1$2[redacted]",
       )
       // `aws configure set aws_secret_access_key VALUE`: a space, not "=", before the value.

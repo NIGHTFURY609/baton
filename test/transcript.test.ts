@@ -247,6 +247,11 @@ describe("redactSecrets", () => {
     ["java -jar t.jar -password hunter2", ["hunter2"]],
     ["tool -passwd hunter2", ["hunter2"]],
     ["openssl pkcs12 -in a.p12 -password pass:hunter2", ["hunter2"]],
+    ["tool -passphrase hunter2", ["hunter2"]],
+    ["keytool -storepass hunter2 -keypass hunter3", ["hunter2", "hunter3"]],
+    ["tool -pwd hunter2", ["hunter2"]],
+    ["tool -pw=hunter2", ["hunter2"]],
+    ["openssl enc -pass hunter2", ["hunter2"]],
     ['mysql -p"my secret" db', ["my secret", "secret"]],
     ["mysql -p'my secret' db", ["my secret", "secret"]],
   ])("redacts the secret in %s", (input, secrets) => {
@@ -281,6 +286,8 @@ describe("redactSecrets", () => {
       "git clone https://github.com/o/r.git",
     );
     expect(redactSecrets("jest --passWithNoTests")).toBe("jest --passWithNoTests");
+    expect(redactSecrets("pwd")).toBe("pwd");
+    expect(redactSecrets("cd src && pwd | cat")).toBe("cd src && pwd | cat");
   });
 
   it("redactSecrets itself is bounded on long adversarial input", () => {
