@@ -70,7 +70,7 @@ describe("failingSections", () => {
   });
 });
 
-describe("requireContext", { timeout: 30_000 }, () => {
+describe("requireContext", () => {
   it("throws a BatonError with exit 1 without .context/", () => {
     try {
       requireContext(makeTempDir());
@@ -86,7 +86,7 @@ describe("requireContext", { timeout: 30_000 }, () => {
   });
 });
 
-describe("baton drift", { timeout: 30_000 }, () => {
+describe("baton drift", () => {
   it("prints a summary and a line per non-fresh section", async () => {
     const root = makeRepo();
     const r = await runCli(["drift"], root);
