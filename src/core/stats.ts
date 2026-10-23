@@ -6,9 +6,19 @@
  * `SessionMetrics` record holds derived numbers only, never transcript text.
  */
 
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { CHARS_PER_TOKEN, PACKET_HEADER } from "./budget.js";
+import { readDriftLog } from "./drift.js";
+import { BatonError } from "./errors.js";
+import { ContextPaths, contextPath } from "./paths.js";
+import { writeFileAtomic } from "./tasks/native/jsonl.js";
 import {
+  findProjectTranscriptDirs,
   firstTurnContextTokens,
+  listSessionTranscripts,
+  parseTranscript,
   sumUsage,
   type TranscriptRecord,
   toolUses,
@@ -219,4 +229,220 @@ export function sessionMetrics(
     hookErrors,
     malformedLines: opts.malformedLines ?? 0,
   };
+}
+
+/** Snapshots live in `.context/.cache/stats/` (git-ignored). */
+export const STATS_DIR = "stats";
+
+export interface StatsSummary {
+  sessions: number;
+  fromSnapshotsOnly: number;
+  firstDay: string | null;
+  lastDay: string | null;
+  startTokens: { median: number; mean: number; min: number; max: number } | null;
+  docTokens: {
+    total: number;
+    medianPerSession: number;
+    tasksClosed: number;
+    perTask: number | null;
+  };
+  packet: { sessions: number; avgChars: number; avgTokens: number };
+  corrections: { total: number; perSession: number };
+  secondsToFirstEdit: { median: number } | null;
+  hookErrors: number;
+  driftFlags: number;
+}
+
+/** Median; an even count rounds the mean of the two middle values. */
+export function median(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+}
+
+const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
+
+export function summarize(sessions: SessionMetrics[], driftFlags: number): StatsSummary {
+  const starts = sessions
+    .map((s) => s.firstTurnContextTokens)
+    .filter((n): n is number => n !== null);
+  const docTotal = sum(sessions.map((s) => s.docTokensEstimate));
+  const tasksClosed = sum(sessions.map((s) => s.tasksClosed.length));
+  const injections = sum(sessions.map((s) => s.packetInjections));
+  const avgChars = injections
+    ? Math.round(sum(sessions.map((s) => s.packetChars)) / injections)
+    : 0;
+  const corrections = sum(sessions.map((s) => s.corrections));
+  const firstEdits = sessions
+    .map((s) => s.secondsToFirstEdit)
+    .filter((n): n is number => n !== null);
+  const days = sessions
+    .map((s) => s.startedAt)
+    .filter((t): t is string => t !== null)
+    .sort();
+  return {
+    sessions: sessions.length,
+    fromSnapshotsOnly: sessions.filter((s) => s.source === "snapshot").length,
+    firstDay: days.length ? (days[0] as string).slice(0, 10) : null,
+    lastDay: days.length ? (days[days.length - 1] as string).slice(0, 10) : null,
+    startTokens: starts.length
+      ? {
+          median: median(starts),
+          mean: Math.round(sum(starts) / starts.length),
+          min: Math.min(...starts),
+          max: Math.max(...starts),
+        }
+      : null,
+    docTokens: {
+      total: docTotal,
+      medianPerSession: median(sessions.map((s) => s.docTokensEstimate)),
+      tasksClosed,
+      perTask: tasksClosed ? Math.round(docTotal / tasksClosed) : null,
+    },
+    packet: {
+      sessions: sessions.filter((s) => s.packetInjections > 0).length,
+      avgChars,
+      avgTokens: Math.ceil(avgChars / CHARS_PER_TOKEN),
+    },
+    corrections: {
+      total: corrections,
+      perSession: sessions.length ? Math.round((corrections / sessions.length) * 100) / 100 : 0,
+    },
+    secondsToFirstEdit: firstEdits.length ? { median: median(firstEdits) } : null,
+    hookErrors: sum(sessions.map((s) => s.hookErrors)),
+    driftFlags,
+  };
+}
+
+export interface StatsOptions {
+  sessionPath?: string;
+  since?: string;
+  projectsDir?: string;
+  platform?: NodeJS.Platform;
+}
+
+export interface StatsReport {
+  projectDirs: string[];
+  sessions: SessionMetrics[];
+  summary: StatsSummary;
+}
+
+async function readSnapshots(dir: string): Promise<SessionMetrics[]> {
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: SessionMetrics[] = [];
+  for (const name of names) {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(join(dir, name), "utf8"));
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { v?: unknown }).v === 1 &&
+        typeof (parsed as { sessionId?: unknown }).sessionId === "string"
+      ) {
+        out.push({ ...(parsed as SessionMetrics), source: "snapshot" });
+      }
+    } catch {
+      // unreadable or unparsable snapshot: skip
+    }
+  }
+  return out;
+}
+
+/**
+ * Metrics for every session of the project: parsed from transcripts (and
+ * snapshotted when `.context/` exists), plus snapshots of sessions whose
+ * transcript has been deleted (ADR 0016). Works without `.context/`.
+ */
+export async function collectStats(root: string, opts: StatsOptions = {}): Promise<StatsReport> {
+  if (opts.since !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.since)) {
+    throw new BatonError("since must be YYYY-MM-DD");
+  }
+  const dirs = opts.sessionPath
+    ? []
+    : await findProjectTranscriptDirs(root, {
+        ...(opts.projectsDir !== undefined ? { projectsDir: opts.projectsDir } : {}),
+        ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
+      });
+  const files = opts.sessionPath
+    ? [{ path: opts.sessionPath, sessionId: basename(opts.sessionPath, ".jsonl") }]
+    : await listSessionTranscripts(dirs);
+
+  const hasContext = existsSync(contextPath(root));
+  const statsDir = contextPath(root, ContextPaths.cache, STATS_DIR);
+  const seen = new Set<string>();
+  let sessions: SessionMetrics[] = [];
+
+  for (const file of files) {
+    if (seen.has(file.sessionId)) continue;
+    seen.add(file.sessionId);
+    const parsed = parseTranscript(await readFile(file.path, "utf8"));
+    const metrics = sessionMetrics(parsed.records, {
+      sessionId: file.sessionId,
+      root,
+      malformedLines: parsed.malformedLines,
+      ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
+    });
+    sessions.push(metrics);
+    if (hasContext) {
+      writeFileAtomic(
+        join(statsDir, `${file.sessionId}.json`),
+        `${JSON.stringify(metrics, null, 2)}\n`,
+      );
+    }
+  }
+
+  if (!opts.sessionPath) {
+    for (const snap of await readSnapshots(statsDir)) {
+      if (seen.has(snap.sessionId)) continue;
+      seen.add(snap.sessionId);
+      sessions.push(snap);
+    }
+  }
+
+  if (opts.since !== undefined) {
+    const from = `${opts.since}T00:00:00.000Z`;
+    sessions = sessions.filter((s) => s.startedAt !== null && s.startedAt >= from);
+  }
+  sessions.sort((a, b) => {
+    if (a.startedAt === b.startedAt) return 0;
+    if (a.startedAt === null) return 1;
+    if (b.startedAt === null) return -1;
+    return a.startedAt < b.startedAt ? -1 : 1;
+  });
+
+  const driftFlags = (await readDriftLog(root)).filter((e) => e.event === "flag").length;
+  return { projectDirs: dirs, sessions, summary: summarize(sessions, driftFlags) };
+}
+
+const fmt = (n: number): string => n.toLocaleString("en-US");
+
+export function renderStats(r: StatsReport): string {
+  if (r.sessions.length === 0) {
+    return `no sessions found (looked in: ${r.projectDirs.length ? r.projectDirs.join(", ") : "none"})`;
+  }
+  const s = r.summary;
+  const lines = [
+    `sessions: ${fmt(s.sessions)} (${s.firstDay} to ${s.lastDay}; ${fmt(s.fromSnapshotsOnly)} from snapshots only)`,
+    s.startTokens
+      ? `tokens at session start: median ${fmt(s.startTokens.median)} · mean ${fmt(s.startTokens.mean)} · min ${fmt(s.startTokens.min)} · max ${fmt(s.startTokens.max)}`
+      : "tokens at session start: no data",
+    `doc tokens (estimate, chars/4): total ${fmt(s.docTokens.total)} · median per session ${fmt(s.docTokens.medianPerSession)} · per closed task ${s.docTokens.perTask === null ? "n/a" : fmt(s.docTokens.perTask)} (${fmt(s.docTokens.tasksClosed)} tasks closed)`,
+    s.packet.sessions > 0
+      ? `baton packet: injected in ${fmt(s.packet.sessions)} session(s), avg ${fmt(s.packet.avgChars)} chars (~${fmt(s.packet.avgTokens)} tokens)`
+      : "baton packet: not seen in any session",
+    `corrections (keyword heuristic): ${fmt(s.corrections.total)} total, ${s.corrections.perSession.toFixed(2)} per session`,
+    s.secondsToFirstEdit
+      ? `time to first edit: median ${fmt(s.secondsToFirstEdit.median)} s`
+      : "time to first edit: no edits",
+    `hook errors (baton): ${fmt(s.hookErrors)}`,
+    `drift flags logged: ${fmt(s.driftFlags)}`,
+  ];
+  return lines.join("\n");
 }
