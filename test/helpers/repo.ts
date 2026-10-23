@@ -80,7 +80,7 @@ export function commitAll(root: string, message: string): string {
  * A temp dir holding `files` (default CONTEXT_FIXTURE), a git repo with one
  * commit unless `opts.git === false`.
  *
- * `findProjectRoot` (an existsSync walk) ignores GIT_CEILING_DIRECTORIES. A
+ * `findContextRoot` (an existsSync walk) ignores GIT_CEILING_DIRECTORIES. A
  * fixture with `.context/` is its own project root; a dir that must count as
  * "no project" needs `runGit(dir, "init", "-q")`.
  */

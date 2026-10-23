@@ -1,7 +1,6 @@
 import { type Command, Option } from "commander";
-import { findProjectRoot } from "../core/paths.js";
 import { collectStats, renderStats, type StatsOptions } from "../core/stats.js";
-import { action } from "./_shared.js";
+import { action, projectRoot } from "./_shared.js";
 
 interface StatsFlags {
   session?: string;
@@ -26,7 +25,7 @@ export function registerStats(program: Command): void {
     )
     .action(
       action(async (opts: StatsFlags) => {
-        const root = findProjectRoot();
+        const root = await projectRoot();
         const options: StatsOptions = {};
         if (opts.session !== undefined) options.sessionPath = opts.session;
         if (opts.since !== undefined) options.since = opts.since;

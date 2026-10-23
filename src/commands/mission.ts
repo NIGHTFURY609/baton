@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import { loadConfig } from "../core/config.js";
 import { buildMission, parseBudget, writePacketCache } from "../core/mission.js";
-import { findProjectRoot } from "../core/paths.js";
-import { action, requireContext } from "./_shared.js";
+import { action, projectRoot, requireContext } from "./_shared.js";
 
 interface MissionCliOptions {
   budget?: string;
@@ -25,7 +24,7 @@ export function registerMission(program: Command): void {
     .option("--format <fmt>", "text | json", "text")
     .action(
       action(async (o: MissionCliOptions) => {
-        const root = findProjectRoot();
+        const root = await projectRoot();
         requireContext(root);
         const config = await loadConfig(root);
         const maxChars = parseBudget(o.budget, config.packet.maxChars);

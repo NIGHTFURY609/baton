@@ -1,7 +1,6 @@
 import type { Command } from "commander";
 import { loadConfig } from "../core/config.js";
 import { BatonError, ExitCode } from "../core/errors.js";
-import { findProjectRoot } from "../core/paths.js";
 import {
   DEP_TYPES,
   type DepType,
@@ -17,7 +16,7 @@ import {
 } from "../core/tasks/native/model.js";
 import type { SortPolicy, TaskService, UpdateInput } from "../core/tasks/native/service.js";
 import { openTaskService } from "../core/tasks/native/store.js";
-import { action } from "./_shared.js";
+import { action, projectRoot } from "./_shared.js";
 
 /** Exit codes for task errors: lookups fail with 1, refused state changes with 2. */
 function toBatonError(err: TaskError): BatonError {
@@ -39,7 +38,7 @@ export async function withTasks<T>(
   globals: { actor?: string },
   fn: (s: TaskService) => T | Promise<T>,
 ): Promise<T> {
-  const root = findProjectRoot();
+  const root = await projectRoot();
   const config = await loadConfig(root);
   const { service, db } = openTaskService(
     root,

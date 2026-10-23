@@ -12,10 +12,9 @@ import {
 } from "../core/drift.js";
 import { BatonError, ExitCode } from "../core/errors.js";
 import { headSha, statusLines } from "../core/git.js";
-import { findProjectRoot } from "../core/paths.js";
 import { loadSectionIndex } from "../core/sections.js";
 import { STAMP_LENGTH, stampSections, uncommittedSources } from "../core/verify-doc.js";
-import { action, requireContext } from "./_shared.js";
+import { action, projectRoot, requireContext } from "./_shared.js";
 
 interface DriftOptions {
   format: "text" | "json";
@@ -41,7 +40,7 @@ export function registerDrift(program: Command): void {
     )
     .action(
       action(async (opts: DriftOptions) => {
-        const root = findProjectRoot();
+        const root = await projectRoot();
         requireContext(root);
         const config = await loadConfig(root);
         const index = await loadSectionIndex(root);
@@ -79,7 +78,7 @@ export function registerDrift(program: Command): void {
     .argument("<section-ids...>", "section ids to stamp")
     .action(
       action(async (ids: string[]) => {
-        const root = findProjectRoot();
+        const root = await projectRoot();
         requireContext(root);
         const head = await headSha(root);
         if (head === null) {

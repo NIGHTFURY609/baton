@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { contextPath, findProjectRoot } from "../core/paths.js";
+import { homedir } from "node:os";
+import { contextPath, findContextRoot } from "../core/paths.js";
 import type { Harness } from "../core/types.js";
 import {
   type HookEvent,
@@ -102,7 +103,10 @@ export async function runHook(
     if (native && NATIVE_EVENT_NAMES[native] && NATIVE_EVENT_NAMES[native] !== event) {
       throw new Error(`hook wired to "${event}" but received ${native}`);
     }
-    const root = findProjectRoot(input.cwd ?? process.cwd());
+    // No spawn on this path (the PreToolUse budget is 150 ms): the nearest .context/ that is
+    // not the home folder, or nothing to do.
+    const root = findContextRoot(input.cwd ?? process.cwd(), process.env.BATON_HOME ?? homedir());
+    if (root === null) return renderHookResult(event, { kind: "noop" }, harness);
     const result = await HANDLERS[event](input, { root, harness });
     return renderHookResult(event, result, harness);
   } catch (err) {

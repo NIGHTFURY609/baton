@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import { loadConfig } from "../core/config.js";
 import { runHandoff, STATE_PATH } from "../core/handoff.js";
-import { findProjectRoot } from "../core/paths.js";
-import { action, requireContext } from "./_shared.js";
+import { action, projectRoot, requireContext } from "./_shared.js";
 
 interface HandoffCliOptions {
   reason: string;
@@ -25,7 +24,7 @@ export function registerHandoff(program: Command): void {
     .option("--dry-run", "print instead of writing STATE.md")
     .action(
       action(async (o: HandoffCliOptions) => {
-        const root = findProjectRoot();
+        const root = await projectRoot();
         requireContext(root);
         const config = await loadConfig(root);
         const result = await runHandoff(root, config, {

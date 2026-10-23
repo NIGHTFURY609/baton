@@ -1,6 +1,17 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { BatonError, ExitCode } from "../core/errors.js";
-import { contextPath } from "../core/paths.js";
+import { contextPath, resolveProjectRoot } from "../core/paths.js";
+
+/** The home folder baton must never treat as a project. `BATON_HOME` stands in for it in tests. */
+export function homeDir(): string {
+  return process.env.BATON_HOME ?? homedir();
+}
+
+/** The project root for the current directory (core/paths.ts `resolveProjectRoot`). */
+export function projectRoot(): Promise<string> {
+  return resolveProjectRoot(process.cwd(), homeDir());
+}
 
 /** Commands that read .context/ need it to exist; exit 1 with a pointer to `baton init`. */
 export function requireContext(root: string): void {
