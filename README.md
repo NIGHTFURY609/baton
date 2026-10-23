@@ -2,7 +2,7 @@
 
 **A continuity layer for coding agents.** Every session starts with the smallest fresh brief, and nothing stale reaches the model.
 
-> Status: **pre-alpha, Phase 0 (dogfood).** The task store (`baton task`, `baton remember`) and `baton explain` (plain-language explanations of a file, dependency or concept, also as `/baton explain`) work. The continuity commands (`mission`, `handoff`, `drift`, …) are scaffolded with their contract and still exit with code 3 ("not implemented"). See [docs/roadmap.md](docs/roadmap.md).
+> Status: **pre-alpha, Phase 1 (MVP) built, awaiting the dogfood gate.** Working now: `init`, `mission`, `handoff`, `drift`, `verify-doc`, `stats`, the task store (`baton task`, `baton remember`) and `baton explain` (plain-language explanations of a file, dependency or concept, also as `/baton explain`). The SessionStart, PreCompact and SessionEnd hooks are wired to them. Still scaffolded and exiting with code 3 ("not implemented"): `decide`, `verify` and `compile` (Phase 2), `mcp` and `init --harness codex|gemini` (Phase 3). See [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -39,7 +39,7 @@ npm run build          # dist/baton.mjs, copied into plugin/dist/
 node dist/baton.mjs --help
 ```
 
-Try the plugin in Claude Code (hooks are safe no-ops for now):
+Try the plugin in Claude Code. In a project that has a `.context/`, SessionStart injects the mission packet, and PreCompact and SessionEnd **rewrite `.context/STATE.md`** (the committed handoff). Anywhere else, including your home folder, the hooks do nothing. The PreToolUse, PostToolUse and Stop hooks stay no-ops until Phase 2:
 
 ```bash
 claude --plugin-dir ./plugin

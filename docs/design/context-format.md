@@ -87,7 +87,7 @@ Computed by `classifyFreshness` (`src/core/freshness.ts`) from the commits in `v
 | fresh | no `source_paths`, or 0 commits | Injected |
 | aging | 1 ≤ commits < threshold | Injected with a one-line flag |
 
-Commits that change only files under `.context/` are not counted, and dead references are defined in ADR 0013.
+Changes to files under `.context/` are not counted (a commit that also touches other matching files still is), and dead references are defined in ADR 0013.
 
 Default thresholds (`config.yaml`): rule 5, state 3, knowledge 10, intent 20, decision never (ADRs go stale only by supersession). Tuning them is a dogfood-phase question. Re-verification is cheap: `baton verify-doc <id>` stamps `verified_at` with HEAD.
 

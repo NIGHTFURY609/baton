@@ -92,7 +92,7 @@ Claude Code wiring ships in `plugin/hooks/hooks.json` (exec form: `node ${CLAUDE
 
 ## Performance budget
 
-Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold measurement: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11: bare node 53 ms, the full bundle 142 ms. `baton hook` therefore bypasses the commander program (ADR 0015).
+Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold-time measurement, platform not recorded: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11, Node 22.16 (implementation notes §1): bare `node -e 0` 53 ms, `baton --version` through the full bundle 142 ms, and the no-op `hook pre-tool-use` 144 ms before the fast path existed; with it, `npm run smoke:hooks` measures a PreToolUse median of about 110 ms. `baton hook` therefore bypasses the commander program (ADR 0015).
 
 ## Integrations (consume, do not replace)
 
