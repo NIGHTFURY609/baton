@@ -17,27 +17,27 @@ In scope: section-level freshness, the budgeted mission packet, hook-generated h
 Not in scope (load-bearing): spec or plan authoring beyond `/init-spec` (superpowers and Spec Kit are upstream); a full project tracker (no Dolt, sync server, UI, molecules or gates; baton ships only the minimal task store of ADR 0009); rules-file sync engines (rulesync-class tools); always-on output-style compression (caveman-style token savers; on-demand explain voices are in scope, ADR 0010); a server that owns state; a hand-maintained mindmap.
 
 ## Context format
-<!-- baton: {id: context-format, kind: intent, verified_at: null, source_paths: ["src/core/frontmatter.ts", "src/core/paths.ts", "templates/**"]} -->
+<!-- baton: {id: context-format, kind: intent, verified_at: null, source_paths: ["src/core/frontmatter.ts", "src/core/paths.ts", "src/core/sections.ts", "src/core/init.ts", "src/core/templates.generated.ts", "templates/**"]} -->
 
 Six documents: rules (→ AGENTS.md), spec, decisions, task store, STATE, knowledge. Files in git are the truth. Structured where mutable, prose where stable. Every section has `id`, `kind`, `verified_at`, `source_paths`. Full format: docs/design/context-format.md.
 
 ## Freshness
-<!-- baton: {id: freshness, kind: intent, verified_at: null, source_paths: ["src/core/freshness.ts", "src/core/git.ts", "src/commands/drift.ts"]} -->
+<!-- baton: {id: freshness, kind: intent, verified_at: null, source_paths: ["src/core/freshness.ts", "src/core/drift.ts", "src/core/sections.ts", "src/core/verify-doc.ts", "src/core/git.ts", "src/commands/drift.ts"]} -->
 
 Sections are fresh, aging, stale, superseded or unverified, computed from commits touching their `source_paths` since `verified_at`, and from dead references. Stale, superseded and unverified sections are never injected; they are listed so someone re-verifies them. Re-verifying must be one cheap command.
 
 ## Mission packet
-<!-- baton: {id: mission-packet, kind: intent, verified_at: null, source_paths: ["src/core/budget.ts", "src/commands/mission.ts"]} -->
+<!-- baton: {id: mission-packet, kind: intent, verified_at: null, source_paths: ["src/core/budget.ts", "src/core/mission.ts", "src/core/tasks/snapshot.ts", "src/commands/mission.ts"]} -->
 
-One packet per session: STATE head, ready tasks, the spec sections and ADRs tagged to them, freshness notices. Character-budgeted (≤ 10,000, ADR 0004), blocks kept or dropped whole, phrased as facts. Nothing else loads by default.
+One packet per session: STATE head, in-progress and ready tasks, the spec sections and ADRs tagged to them, freshness notices, project memories and pointers to the rest. Character-budgeted (default 9,000, never above 10,000, ADR 0004), blocks kept or dropped whole, phrased as facts. Nothing else loads by default.
 
 ## Handoff
-<!-- baton: {id: handoff, kind: intent, verified_at: null, source_paths: ["src/commands/handoff.ts", "src/hooks/dispatch.ts"]} -->
+<!-- baton: {id: handoff, kind: intent, verified_at: null, source_paths: ["src/commands/handoff.ts", "src/core/handoff.ts", "src/core/transcript.ts", "src/hooks/dispatch.ts"]} -->
 
 STATE.md is generated from structured state (task store, git status, diff --stat, recent tool calls), never from the model's recollection, and is overwritten, never appended. Written at PreCompact and SessionEnd by hooks (ADR 0005); `/handoff` is the human-reviewed form.
 
 ## Hooks
-<!-- baton: {id: hooks, kind: intent, verified_at: null, source_paths: ["src/hooks/**", "plugin/hooks/**"]} -->
+<!-- baton: {id: hooks, kind: intent, verified_at: null, source_paths: ["src/hooks/**", "src/cli.ts", "plugin/hooks/**"]} -->
 
 Hooks are the enforcement layer; the MCP is only an adapter. Hooks fail open, use exec-form `node`, and guard both edit tools and the shell (ADR 0008). Claude Code first; Codex and Gemini CLI equivalents in Phase 3.
 
@@ -57,6 +57,6 @@ Work items live in a structured task store: by default baton's own, ported from 
 MADR 4.0 records in `.context/decisions/`, append-only, superseded never edited (ADR 0001). `decide --preflight` checks a proposed change against accepted decisions and the spec before it lands.
 
 ## Measurement
-<!-- baton: {id: measurement, kind: intent, verified_at: null, source_paths: ["src/core/transcript.ts", "src/commands/stats.ts"]} -->
+<!-- baton: {id: measurement, kind: intent, verified_at: null, source_paths: ["src/core/transcript.ts", "src/core/stats.ts", "src/commands/stats.ts"]} -->
 
-`baton stats` reports tokens at session start, doc tokens per task, corrections, drift caught and time to resume from the session log, and counts baton's own overhead against its savings.
+`baton stats` reports tokens at session start, doc tokens per task, corrections, drift flags and time to first edit (the stand-in for time to resume, ADR 0016) from the session log, and shows baton's own packet size beside them so the overhead can be weighed against the savings.
