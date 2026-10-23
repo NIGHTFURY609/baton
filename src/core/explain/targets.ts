@@ -1,8 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseFileSection, parseFrontmatter, parseSections } from "../frontmatter.js";
 import { git, isGitRepo } from "../git.js";
 import { CONTEXT_DIR, ContextPaths, toRepoPath } from "../paths.js";
+import { type IndexedSection, loadSectionIndex } from "../sections.js";
 import type { Section } from "../types.js";
 import { toKey } from "./match.js";
 
@@ -34,7 +34,7 @@ export type Target =
   | (Base & { kind: "mermaid"; nodeId: string; edgesOut: string[]; edgesIn: string[] }); // edge entries are neighbour labels
 
 export interface Decision {
-  section: Section;
+  section: IndexedSection;
   /** `spec_sections` from the ADR's frontmatter. */
   specSections: string[];
 }
@@ -44,7 +44,7 @@ export interface RepoIndex {
   /** Repo paths, POSIX, no directories. */
   files: string[];
   /** spec.md + rules.md sections and knowledge/*.md (not STATE.md, not decisions). */
-  contextSections: Section[];
+  contextSections: IndexedSection[];
   /** .context/decisions/*.md that carry an id. */
   decisions: Decision[];
   targets: Target[];
@@ -67,8 +67,16 @@ export async function buildIndex(
 ): Promise<RepoIndex> {
   const skipped: SkippedFile[] = [];
   const files = await listFiles(root, skipped, opts.maxFiles ?? MAX_INDEXED_FILES);
-  const contextSections = await loadContextSections(root, skipped);
-  const decisions = await loadDecisions(root, skipped);
+  const index = await loadSectionIndex(root, { lenient: true });
+  skipped.push(
+    ...index.problems.map((p) => ({ file: p.file, error: p.message.split("\n")[0] ?? p.message })),
+  );
+  const contextSections = index.sections.filter(
+    (s) => s.doc === "rules" || s.doc === "spec" || s.doc === "knowledge",
+  );
+  const decisions = index.sections
+    .filter((s) => s.doc === "decision")
+    .map((s) => ({ section: s, specSections: s.adr?.specSections ?? [] }));
 
   const targets: Target[] = [
     ...fileTargets(files),
@@ -254,62 +262,6 @@ async function dependencyTargets(root: string, skipped: SkippedFile[]): Promise<
 }
 
 // ---------------------------------------------------------------- .context
-
-async function markdownIn(root: string, repoDir: string): Promise<string[]> {
-  try {
-    const names = await readdir(join(root, repoDir));
-    return names
-      .filter((n) => n.endsWith(".md"))
-      .sort()
-      .map((n) => `${repoDir}/${n}`);
-  } catch {
-    return [];
-  }
-}
-
-async function loadContextSections(root: string, skipped: SkippedFile[]): Promise<Section[]> {
-  const sections: Section[] = [];
-  const knowledge = await markdownIn(root, `${CONTEXT_DIR}/${ContextPaths.knowledge}`);
-  const candidates = [
-    { file: `${CONTEXT_DIR}/${ContextPaths.spec}`, multi: true },
-    { file: `${CONTEXT_DIR}/${ContextPaths.rules}`, multi: true },
-    ...knowledge.map((file) => ({ file, multi: false })),
-  ];
-  for (const { file, multi } of candidates) {
-    const text = await readText(root, file);
-    if (text === null) continue;
-    try {
-      if (multi) sections.push(...parseSections(text, file));
-      else {
-        const section = parseFileSection(text, file);
-        if (section) sections.push(section);
-      }
-    } catch (err) {
-      // Malformed file (duplicate id, bad marker): skip it, keep indexing.
-      skip(skipped, file, err);
-    }
-  }
-  return sections;
-}
-
-async function loadDecisions(root: string, skipped: SkippedFile[]): Promise<Decision[]> {
-  const decisions: Decision[] = [];
-  for (const file of await markdownIn(root, `${CONTEXT_DIR}/${ContextPaths.decisions}`)) {
-    const text = await readText(root, file);
-    if (text === null) continue;
-    try {
-      const section = parseFileSection(text, file);
-      if (!section) continue;
-      const raw = parseFrontmatter(text).data.spec_sections;
-      const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
-      decisions.push({ section, specSections: list.filter((s) => typeof s === "string") });
-    } catch (err) {
-      // Malformed ADR: skip it.
-      skip(skipped, file, err);
-    }
-  }
-  return decisions;
-}
 
 function sectionTarget(section: Section): Target {
   return {

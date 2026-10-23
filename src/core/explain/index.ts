@@ -1,5 +1,6 @@
 import { type Config, defaultConfig, loadConfig } from "../config.js";
 import { CONTEXT_DIR, ContextPaths } from "../paths.js";
+import type { Section } from "../types.js";
 import { collectFacts, type Fact } from "./facts.js";
 import { matchTargets, toKey } from "./match.js";
 import {
@@ -69,7 +70,7 @@ function readableConfigError(err: unknown): unknown {
  * diagram nodes and, last, files (which the index lists first).
  */
 function byPriority(matches: Target[], index: RepoIndex): Target[] {
-  const decisions = new Set(index.decisions.map((d) => d.section));
+  const decisions = new Set<Section>(index.decisions.map((d) => d.section));
   const rank = (t: Target): number => {
     switch (t.kind) {
       case "section":
