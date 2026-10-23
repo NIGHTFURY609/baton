@@ -7,6 +7,11 @@
  * docs/research/2026-10-16-implementation-notes.md (section 4).
  */
 
+import type { Dirent } from "node:fs";
+import { open, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export interface Usage {
   inputTokens: number;
   cacheCreationInputTokens: number;
@@ -93,4 +98,220 @@ export function firstTurnContextTokens(records: TranscriptRecord[]): number | nu
 /** Encode a cwd the way Claude Code names its per-project transcript folder. */
 export function encodeProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/** `<CLAUDE_CONFIG_DIR or ~/.claude>/projects`, where Claude Code keeps per-project transcripts. */
+export function claudeProjectsDir(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
+  return join(env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "projects");
+}
+
+/**
+ * Transcript folders for a project root. A project has one folder, but its
+ * name can differ in case from the encoded cwd (drive letter on Windows), so
+ * the match is case-insensitive on win32 only.
+ */
+export async function findProjectTranscriptDirs(
+  root: string,
+  opts: { projectsDir?: string; platform?: NodeJS.Platform } = {},
+): Promise<string[]> {
+  const projectsDir = opts.projectsDir ?? claudeProjectsDir();
+  const platform = opts.platform ?? process.platform;
+  const encoded = encodeProjectDir(root);
+  let entries: Dirent[];
+  try {
+    entries = await readdir(projectsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const matches = entries
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .filter(
+      (name) =>
+        name === encoded || (platform === "win32" && name.toLowerCase() === encoded.toLowerCase()),
+    );
+  const others = matches.filter((n) => n !== encoded).sort();
+  const ordered = matches.includes(encoded) ? [encoded, ...others] : others;
+  return ordered.map((name) => join(projectsDir, name));
+}
+
+export interface TranscriptFile {
+  path: string;
+  sessionId: string;
+  mtimeMs: number;
+}
+
+/** Session transcripts (`*.jsonl` files directly in `dirs`), newest first. */
+export async function listSessionTranscripts(dirs: string[]): Promise<TranscriptFile[]> {
+  const files: TranscriptFile[] = [];
+  for (const dir of dirs) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (!e.isFile() || !e.name.endsWith(".jsonl")) continue;
+      const path = join(dir, e.name);
+      try {
+        const s = await stat(path);
+        files.push({ path, sessionId: e.name.slice(0, -".jsonl".length), mtimeMs: s.mtimeMs });
+      } catch {
+        // vanished between readdir and stat
+      }
+    }
+  }
+  return files.sort(
+    (a, b) => b.mtimeMs - a.mtimeMs || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+  );
+}
+
+/** Parse the last `maxBytes` of a transcript, dropping the partial first line. */
+export async function readTranscriptTail(
+  path: string,
+  maxBytes = 262_144,
+): Promise<ParsedTranscript> {
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size <= maxBytes) return parseTranscript(await handle.readFile("utf8"));
+    const buf = Buffer.alloc(maxBytes);
+    let read = 0;
+    while (read < maxBytes) {
+      const { bytesRead } = await handle.read(buf, read, maxBytes - read, size - maxBytes + read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    const text = buf.subarray(0, read).toString("utf8");
+    return parseTranscript(text.slice(text.indexOf("\n") + 1));
+  } finally {
+    await handle.close();
+  }
+}
+
+export interface ToolUse {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  timestamp?: string;
+  isError: boolean;
+}
+
+function contentBlocks(r: TranscriptRecord): Record<string, unknown>[] {
+  const content = r.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter(
+    (b): b is Record<string, unknown> => !!b && typeof b === "object" && !Array.isArray(b),
+  );
+}
+
+/** Tool calls in order, de-duplicated by id, with failed results marked. */
+export function toolUses(records: TranscriptRecord[]): ToolUse[] {
+  const uses = new Map<string, ToolUse>();
+  for (const r of records) {
+    if (r.type !== "assistant") continue;
+    for (const b of contentBlocks(r)) {
+      if (b.type !== "tool_use" || typeof b.id !== "string" || typeof b.name !== "string") continue;
+      if (uses.has(b.id)) continue;
+      const input =
+        b.input && typeof b.input === "object" && !Array.isArray(b.input)
+          ? (b.input as Record<string, unknown>)
+          : {};
+      uses.set(b.id, {
+        id: b.id,
+        name: b.name,
+        input,
+        ...(typeof r.timestamp === "string" ? { timestamp: r.timestamp } : {}),
+        isError: false,
+      });
+    }
+  }
+  for (const r of records) {
+    if (r.type !== "user") continue;
+    for (const b of contentBlocks(r)) {
+      if (b.type !== "tool_result" || b.is_error !== true) continue;
+      const use = typeof b.tool_use_id === "string" ? uses.get(b.tool_use_id) : undefined;
+      if (use) use.isError = true;
+    }
+  }
+  return [...uses.values()];
+}
+
+/** Mask common credential shapes. Applied to everything that can reach a committed file. */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, "[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
+    .replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, "[redacted]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
+    .replace(
+      /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
+      "$1=[redacted]",
+    );
+}
+
+const MAX_ARG = 80;
+
+function bounded(text: string): string {
+  const s = redactSecrets(text);
+  return s.length > MAX_ARG ? `${s.slice(0, MAX_ARG)}…` : s;
+}
+
+/** Repo-relative path when under `root`, `…/<file>` for other absolute paths. */
+function shownPath(p: string, root: string, platform: NodeJS.Platform): string {
+  const a = p.replace(/\\/g, "/");
+  const r = root.replace(/\\/g, "/").replace(/\/$/, "");
+  const under =
+    platform === "win32"
+      ? a.toLowerCase().startsWith(`${r.toLowerCase()}/`)
+      : a.startsWith(`${r}/`);
+  if (under) return a.slice(r.length + 1);
+  if (/^[A-Za-z]:\//.test(a) || a.startsWith("/")) return `…/${a.slice(a.lastIndexOf("/") + 1)}`;
+  return a;
+}
+
+const PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/** One redacted, bounded line per tool call, safe to commit in STATE.md. */
+export function summarizeToolUse(
+  t: ToolUse,
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+  let line: string;
+  if (PATH_TOOLS.has(t.name)) {
+    const p = str(t.input.file_path) ?? str(t.input.notebook_path);
+    line = p ? `${t.name} ${bounded(shownPath(p, root, platform))}` : t.name;
+  } else if (t.name === "Bash") {
+    const cmd = str(t.input.command);
+    line = cmd === undefined ? t.name : `Bash: ${bounded(cmd.split(/\r?\n/)[0] ?? "")}`;
+  } else if (t.name === "Grep" || t.name === "Glob") {
+    const pattern = str(t.input.pattern);
+    line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern)}`;
+  } else if (t.name === "Task" || t.name === "Agent") {
+    const d = str(t.input.description);
+    line = d === undefined ? t.name : `${t.name}: ${bounded(d)}`;
+  } else {
+    line = t.name;
+  }
+  return t.isError ? `${line} (failed)` : line;
+}
+
+/** Summaries of the last `limit` tool calls, oldest first. */
+export function recentToolCalls(
+  records: TranscriptRecord[],
+  root: string,
+  limit: number,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const uses = toolUses(records);
+  return uses
+    .slice(Math.max(0, uses.length - limit))
+    .map((t) => summarizeToolUse(t, root, platform));
 }
