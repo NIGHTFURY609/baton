@@ -8,7 +8,8 @@
       "!.context/.cache",
       "!node_modules",
       "!coverage",
-      "!**/*.md"
+      "!**/*.md",
+      "!src/core/templates.generated.ts"
     ]
   },
   "formatter": {

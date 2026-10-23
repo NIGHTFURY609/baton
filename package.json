@@ -18,7 +18,8 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "build": "tsup && node scripts/sync-plugin.mjs",
+    "build": "node scripts/embed-templates.mjs && tsup && node scripts/sync-plugin.mjs",
+    "embed:templates": "node scripts/embed-templates.mjs",
     "dev": "tsup --watch",
     "baton": "node dist/baton.mjs",
     "typecheck": "tsc --noEmit",
