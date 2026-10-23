@@ -243,6 +243,7 @@ describe("redactSecrets", () => {
     ["node x --pass hunter2", ["hunter2"]],
     ["http --auth bob:pw123 x.com", ["pw123"]],
     ["aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG", ["wJalrXUtnFEMI"]],
+    ["printf 'machine x login y password hunter2' > ~/.netrc", ["hunter2"]],
   ])("redacts the secret in %s", (input, secrets) => {
     const out = redactSecrets(input);
     for (const secret of secrets) expect(out).not.toContain(secret);
@@ -275,6 +276,29 @@ describe("redactSecrets", () => {
       "git clone https://github.com/o/r.git",
     );
     expect(redactSecrets("jest --passWithNoTests")).toBe("jest --passWithNoTests");
+  });
+
+  it("redactSecrets itself is bounded on long adversarial input", () => {
+    const runs = [
+      "-".repeat(100_000),
+      "a-".repeat(50_000),
+      "login ".repeat(20_000),
+      "curl -x ".repeat(15_000),
+      "a://".repeat(25_000),
+      "x://a:".repeat(20_000),
+    ];
+    for (const run of runs) {
+      const t0 = performance.now();
+      const out = redactSecrets(run);
+      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(out.length).toBeLessThanOrEqual(1100);
+    }
+  });
+
+  it("drops, rather than leaks, a secret that sits past the scan limit", () => {
+    const out = redactSecrets(`${"x ".repeat(600)}password=hunter2`);
+    expect(out).not.toContain("hunter2");
+    expect(out.endsWith("…")).toBe(true);
   });
 
   it("stays fast on pathological input", () => {

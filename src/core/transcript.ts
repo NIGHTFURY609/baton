@@ -244,10 +244,16 @@ export function toolUses(records: TranscriptRecord[]): ToolUse[] {
 /** Redaction and path shortening look at this many characters of a line; the display cut is 80. */
 const MAX_SCAN = 1024;
 
-/** Mask common credential shapes. Applied to everything that can reach a committed file. */
+/**
+ * Mask common credential shapes. Applied to everything that can reach a committed file.
+ * Only the first 1024 characters are examined and returned (with a trailing "…" when cut):
+ * some patterns are quadratic on long adversarial input, and the hooks that call this have
+ * a hard time budget. Dropping the tail can never leak a secret.
+ */
 export function redactSecrets(text: string): string {
+  const head = text.length > MAX_SCAN ? `${text.slice(0, MAX_SCAN)}…` : text;
   return (
-    text
+    head
       .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[redacted]")
       .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
       .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}/g, "[redacted]")
@@ -261,7 +267,7 @@ export function redactSecrets(text: string): string {
       // URL userinfo, with or without a password. The password may contain "@" or "/", so the
       // colon form runs greedily to the last "@" of the token. "host:8080/a@b" is a port, not userinfo.
       .replace(
-        /\b([a-z][a-z0-9+.-]*:\/\/)(?:[^\s/@:]*:(?!\d+(?:[/?#]|$))\S*@|[^\s/@:]+@)/gi,
+        /\b([a-z][a-z0-9+.-]{0,31}:\/\/)(?:[^\s/@:]*:(?!\d+(?:[/?#]|$))\S*@|[^\s/@:]+@)/gi,
         "$1[redacted]@",
       )
       .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
@@ -277,6 +283,11 @@ export function redactSecrets(text: string): string {
       // `aws configure set aws_secret_access_key VALUE`: a space, not "=", before the value.
       .replace(
         /(\b(?:set|config|configure)\s+(?:--?[\w-]+\s+){0,4}[\w.:/-]{0,64}(?:secret_access_key|password|passwd|secret|token)[\w.:/-]{0,64}\s+)("[^"]*"|'[^']*'|\S+)/gi,
+        "$1[redacted]",
+      )
+      // netrc: `machine h login u password SECRET`
+      .replace(
+        /(\blogin\s+\S{1,64}\s+(?:password|passwd)\s+)("[^"]*"|'[^']*'|[^\s'"]+)/gi,
         "$1[redacted]",
       )
       .replace(
@@ -321,7 +332,7 @@ function shortenPathToken(tok: string, root: string, platform: NodeJS.Platform):
 
 /** Redact, optionally shorten out-of-repo absolute paths in free text, then cut to 80 chars. */
 function bounded(text: string, root: string, platform: NodeJS.Platform, paths = false): string {
-  let s = redactSecrets(text.slice(0, MAX_SCAN));
+  let s = redactSecrets(text);
   if (paths) s = s.replace(ABSOLUTE_PATH_TOKEN, (tok) => shortenPathToken(tok, root, platform));
   return s.length > MAX_ARG ? `${s.slice(0, MAX_ARG)}…` : s;
 }
