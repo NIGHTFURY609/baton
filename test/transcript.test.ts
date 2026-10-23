@@ -244,6 +244,11 @@ describe("redactSecrets", () => {
     ["http --auth bob:pw123 x.com", ["pw123"]],
     ["aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG", ["wJalrXUtnFEMI"]],
     ["printf 'machine x login y password hunter2' > ~/.netrc", ["hunter2"]],
+    ["java -jar t.jar -password hunter2", ["hunter2"]],
+    ["tool -passwd hunter2", ["hunter2"]],
+    ["openssl pkcs12 -in a.p12 -password pass:hunter2", ["hunter2"]],
+    ['mysql -p"my secret" db', ["my secret", "secret"]],
+    ["mysql -p'my secret' db", ["my secret", "secret"]],
   ])("redacts the secret in %s", (input, secrets) => {
     const out = redactSecrets(input);
     for (const secret of secrets) expect(out).not.toContain(secret);
@@ -299,6 +304,28 @@ describe("redactSecrets", () => {
     const out = redactSecrets(`${"x ".repeat(600)}password=hunter2`);
     expect(out).not.toContain("hunter2");
     expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("keeps the shape of single-dash password flags and quoted -p values", () => {
+    expect(redactSecrets("java -jar t.jar -password hunter2")).toBe(
+      "java -jar t.jar -password [redacted]",
+    );
+    expect(redactSecrets('mysql -p"my secret" db')).toBe("mysql -p[redacted] db");
+    // An attached password that merely starts with "ass" is still a -p password.
+    expect(redactSecrets("mysql -password123 db")).not.toContain("word123");
+  });
+
+  it("drops a token that the scan cap cut, so no fragment survives path shortening", () => {
+    const cmd = `cat C:\\a\\${"x".repeat(1000)}\\f.txt ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`;
+    const out = summarizeToolUse(
+      { id: "1", name: "Bash", input: { command: cmd }, isError: false },
+      "/w",
+      "linux",
+    );
+    expect(out).not.toContain("ghp_");
+    expect(out).toContain("f.txt");
+    // The token the cut lands in is dropped whole, with the space before it.
+    expect(redactSecrets(`${"y".repeat(1023)} tail`)).toBe(`${"y".repeat(1023)}…`);
   });
 
   it("stays fast on pathological input", () => {

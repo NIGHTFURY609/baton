@@ -251,7 +251,25 @@ const MAX_SCAN = 1024;
  * a hard time budget. Dropping the tail can never leak a secret.
  */
 export function redactSecrets(text: string): string {
-  const head = text.length > MAX_SCAN ? `${text.slice(0, MAX_SCAN)}…` : text;
+  return redactHead(capScan(text));
+}
+
+/**
+ * Cut to MAX_SCAN. A token the cut lands inside is dropped whole: its fragment could be too
+ * short for a secret pattern to match yet still be shown (e.g. after path shortening pulls it
+ * into the 80-char window).
+ */
+function capScan(text: string): string {
+  if (text.length <= MAX_SCAN) return text;
+  let cut = text.slice(0, MAX_SCAN);
+  if (!/\s/.test(text.charAt(MAX_SCAN))) {
+    const lastSpace = cut.search(/\s\S*$/);
+    cut = lastSpace === -1 ? "" : cut.slice(0, lastSpace);
+  }
+  return `${cut}…`;
+}
+
+function redactHead(head: string): string {
   return (
     head
       .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[redacted]")
@@ -271,9 +289,14 @@ export function redactSecrets(text: string): string {
         "$1[redacted]@",
       )
       .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
-      // `mysql -pSECRET` (attached) and `docker login -p SECRET` (separate). Port maps,
-      // `mkdir -pv` and the like are left alone.
-      .replace(/(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))[^\s-]\S{3,}/g, "$1[redacted]")
+      // `mysql -pSECRET` and `mysql -p"my secret"` (attached), `docker login -p SECRET` (separate).
+      // Port maps, `mkdir -pv` and the like are left alone. A bare `-password` / `-passwd` flag
+      // is left to the flag rule below, which redacts the value after it.
+      .replace(/(?<![\w-])(-p)(?:"[^"]*"|'[^']*')/g, "$1[redacted]")
+      .replace(
+        /(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))(?!ass(?:word|wd)(?![\w-]))[^\s-]\S{3,}/g,
+        "$1[redacted]",
+      )
       .replace(/(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*"|'[^']*'|\S+)/g, "$1[redacted]")
       // Each [\w-] run is bounded so a long run of dashes cannot go quadratic.
       .replace(
