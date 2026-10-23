@@ -12,6 +12,9 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
+/** First line of every mission packet. `baton stats` finds baton's packet in transcripts by it. */
+export const PACKET_HEADER = "# baton mission brief";
+
 export interface PacketBlock {
   /** Stable key, e.g. "state", "task:bd-a1b2", "spec:auth". */
   key: string;
