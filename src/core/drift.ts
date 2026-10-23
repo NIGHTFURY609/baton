@@ -1,10 +1,13 @@
 import { existsSync } from "node:fs";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { Config } from "./config.js";
 import { classifyFreshness } from "./freshness.js";
 import { changedFilesPerCommit, headSha, ignoredPaths, isGitRepo, listRepoFiles } from "./git.js";
 import { globToRegExp } from "./glob.js";
+import { ContextPaths, contextPath } from "./paths.js";
 import type { IndexedSection } from "./sections.js";
+import { sha256 } from "./tasks/native/jsonl.js";
 import type { FreshnessLevel, FreshnessResult } from "./types.js";
 
 /**
@@ -191,4 +194,154 @@ export async function evaluateFreshness(
   });
 
   return { head, sections: out, counts: tally(out) };
+}
+
+/** Drift log under .context/.cache/ (git-ignored): one JSON line per flag or verification. */
+export const DRIFT_LOG = "drift.jsonl";
+
+export type DriftEvent =
+  | {
+      v: 1;
+      ts: string;
+      event: "flag";
+      head: string | null;
+      id: string;
+      level: "aging" | "stale";
+      commitsSince: number;
+      reason: string;
+      bodyHash: string;
+    }
+  | { v: 1; ts: string; event: "verified"; head: string; id: string; bodyHash: string };
+
+export function bodyHash(body: string): string {
+  return sha256(body).slice(0, 12);
+}
+
+/** One "flag" event per aging or stale section. */
+export function flagEvents(report: FreshnessReport, ts: string): DriftEvent[] {
+  const head = report.head?.slice(0, 12) ?? null;
+  const events: DriftEvent[] = [];
+  for (const s of report.sections) {
+    const level = s.result.level;
+    if (level !== "aging" && level !== "stale") continue;
+    events.push({
+      v: 1,
+      ts,
+      event: "flag",
+      head,
+      id: s.section.meta.id,
+      level,
+      commitsSince: s.result.commitsSince,
+      reason: s.result.reason,
+      bodyHash: bodyHash(s.section.body),
+    });
+  }
+  return events;
+}
+
+/** Append-only on purpose: the one write under .context/ that does not go through writeFileAtomic. */
+export async function appendDriftLog(root: string, events: DriftEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const dir = contextPath(root, ContextPaths.cache);
+  await mkdir(dir, { recursive: true });
+  await appendFile(
+    join(dir, DRIFT_LOG),
+    events.map((e) => `${JSON.stringify(e)}\n`).join(""),
+    "utf8",
+  );
+}
+
+/** Missing file gives []; malformed lines are skipped. */
+export async function readDriftLog(root: string): Promise<DriftEvent[]> {
+  let text: string;
+  try {
+    text = await readFile(contextPath(root, ContextPaths.cache, DRIFT_LOG), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const events: DriftEvent[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        events.push(parsed as DriftEvent);
+      }
+    } catch {
+      // skip malformed line
+    }
+  }
+  return events;
+}
+
+export type FailOn = "aging" | "stale";
+
+const FAIL_LEVELS: Record<FailOn, readonly FreshnessLevel[]> = {
+  aging: ["aging", "stale", "unverified"],
+  stale: ["stale", "unverified"],
+};
+
+/** Sections at or beyond `failOn`. Never superseded or fresh. */
+export function failingSections(report: FreshnessReport, failOn: FailOn): SectionFreshness[] {
+  const levels = FAIL_LEVELS[failOn];
+  return report.sections.filter((s) => levels.includes(s.result.level));
+}
+
+const TEXT_ORDER: readonly FreshnessLevel[] = ["stale", "unverified", "aging", "superseded"];
+
+export function renderDriftText(report: FreshnessReport): string {
+  const c = report.counts;
+  const lines = [
+    `${report.sections.length} sections: ${c.fresh} fresh, ${c.aging} aging, ${c.stale} stale, ${c.unverified} unverified, ${c.superseded} superseded`,
+  ];
+  for (const level of TEXT_ORDER) {
+    for (const s of report.sections) {
+      if (s.result.level !== level) continue;
+      const { id } = s.section.meta;
+      lines.push(
+        `${level.toUpperCase()}  ${id}  ${s.section.file}:${s.section.line}  ${s.result.reason}`,
+      );
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export interface DriftJson {
+  head: string | null;
+  counts: Record<FreshnessLevel, number>;
+  sections: {
+    id: string;
+    kind: string;
+    doc: string;
+    file: string;
+    line: number;
+    level: FreshnessLevel;
+    commitsSince: number;
+    reason: string;
+    deadRefs: string[];
+    verifiedAt: string | null;
+    sourcePaths: string[];
+  }[];
+}
+
+/** All sections, index order. */
+export function driftJson(report: FreshnessReport): DriftJson {
+  return {
+    head: report.head,
+    counts: report.counts,
+    sections: report.sections.map((s) => ({
+      id: s.section.meta.id,
+      kind: s.section.meta.kind,
+      doc: s.section.doc,
+      file: s.section.file,
+      line: s.section.line,
+      level: s.result.level,
+      commitsSince: s.result.commitsSince,
+      reason: s.result.reason,
+      deadRefs: s.deadRefs,
+      verifiedAt: s.section.meta.verifiedAt,
+      sourcePaths: s.section.meta.sourcePaths,
+    })),
+  };
 }

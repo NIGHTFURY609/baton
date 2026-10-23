@@ -1,4 +1,13 @@
+import { existsSync } from "node:fs";
 import { BatonError, ExitCode } from "../core/errors.js";
+import { contextPath } from "../core/paths.js";
+
+/** Commands that read .context/ need it to exist; exit 1 with a pointer to `baton init`. */
+export function requireContext(root: string): void {
+  if (!existsSync(contextPath(root))) {
+    throw new BatonError(`no .context/ in ${root}; run \`baton init\` first`);
+  }
+}
 
 /**
  * Wrap a command action: map BatonError to its exit code and a one-line
