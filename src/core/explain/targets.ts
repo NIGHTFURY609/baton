@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fencedLines, findFences } from "../fences.js";
 import { git, isGitRepo } from "../git.js";
 import { CONTEXT_DIR, ContextPaths, toRepoPath } from "../paths.js";
 import { type IndexedSection, loadSectionIndex } from "../sections.js";
@@ -276,45 +277,10 @@ function sectionTarget(section: Section): Target {
 
 // ---------------------------------------------------------------- markdown
 
-export interface Fence {
-  /** Line index of the opening fence. */
-  open: number;
-  /** Line index of the closing fence (last line when unclosed). */
-  close: number;
-  info: string;
-}
-
-export function findFences(lines: string[]): Fence[] {
-  const fences: Fence[] = [];
-  let open: { index: number; char: string; size: number; info: string } | null = null;
-  lines.forEach((line, i) => {
-    if (open) {
-      const m = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
-      if (m && m[1]?.[0] === open.char && (m[1]?.length ?? 0) >= open.size) {
-        fences.push({ open: open.index, close: i, info: open.info });
-        open = null;
-      }
-      return;
-    }
-    const m = /^ {0,3}(`{3,}|~{3,})\s*(.*)$/.exec(line);
-    if (m)
-      open = {
-        index: i,
-        char: m[1]?.[0] ?? "`",
-        size: m[1]?.length ?? 3,
-        info: (m[2] ?? "").trim(),
-      };
-  });
-  const unclosed = open as { index: number; info: string } | null;
-  if (unclosed) fences.push({ open: unclosed.index, close: lines.length - 1, info: unclosed.info });
-  return fences;
-}
-
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 
 export function headingTargets(file: string, lines: string[]): Target[] {
-  const fences = findFences(lines);
-  const inFence = (i: number) => fences.some((f) => i >= f.open && i <= f.close);
+  const fenced = fencedLines(lines);
 
   // YAML frontmatter can hold `# comments`; it is not document structure.
   let first = 0;
@@ -325,7 +291,7 @@ export function headingTargets(file: string, lines: string[]): Target[] {
 
   const found: { index: number; level: number; title: string }[] = [];
   for (let i = first; i < lines.length; i++) {
-    if (inFence(i)) continue;
+    if (fenced[i]) continue;
     const m = HEADING_RE.exec(lines[i] ?? "");
     if (m) found.push({ index: i, level: (m[1] ?? "#").length, title: m[2] ?? "" });
   }

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { Config } from "./config.js";
+import { fencedLines } from "./fences.js";
 import { classifyFreshness } from "./freshness.js";
 import { changedFilesPerCommit, headSha, ignoredPaths, isGitRepo, listRepoFiles } from "./git.js";
 import { globToRegExp } from "./glob.js";
@@ -49,17 +50,9 @@ const LINK_RE = /\[[^\]]*\]\(([^)\s]+)\)/g;
 const PATTERN_SYNTAX_RE = /[*?<>{}]|NNNN/;
 
 function stripFences(body: string): string {
-  const kept: string[] = [];
-  let inFence = false;
-  for (const line of body.split("\n")) {
-    const t = line.trimStart();
-    if (t.startsWith("```") || t.startsWith("~~~")) {
-      inFence = !inFence;
-      continue;
-    }
-    if (!inFence) kept.push(line);
-  }
-  return kept.join("\n");
+  const lines = body.split("\n");
+  const fenced = fencedLines(lines);
+  return lines.filter((_, i) => !fenced[i]).join("\n");
 }
 
 /**

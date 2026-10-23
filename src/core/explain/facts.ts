@@ -1,18 +1,12 @@
 import { extname } from "node:path";
 import type { Config } from "../config.js";
 import { evaluateFreshness } from "../drift.js";
+import { fencedLines, findFences } from "../fences.js";
 import { classifyFreshness } from "../freshness.js";
 import { matchesAny } from "../glob.js";
 import { CONTEXT_DIR } from "../paths.js";
 import type { FreshnessLevel, Section } from "../types.js";
-import {
-  findFences,
-  headingTargets,
-  type RepoIndex,
-  readLines,
-  skip,
-  type Target,
-} from "./targets.js";
+import { headingTargets, type RepoIndex, readLines, skip, type Target } from "./targets.js";
 
 /**
  * The evidence `baton explain` answers from: literal facts read out of the repo,
@@ -62,7 +56,7 @@ const LABEL_ORDER: FactLabel[] = [
   "import",
 ];
 
-/** The heading syntax `parseSections` uses to close a section (fence-unaware, like the parser). */
+/** The heading syntax `parseSections` uses to close a section (callers skip fenced lines, like the parser). */
 const HEADING_LINE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"]);
@@ -355,7 +349,9 @@ class Collector {
     const own = HEADING_LINE.exec(lines[section.line - 1] ?? "");
     if (!own) return true;
     const level = (own[1] ?? "#").length;
+    const fenced = fencedLines(lines);
     for (let i = section.line; i < line - 1; i++) {
+      if (fenced[i]) continue;
       const h = HEADING_LINE.exec(lines[i] ?? "");
       if (h && (h[1] ?? "#").length <= level) return false;
     }

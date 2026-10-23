@@ -266,6 +266,38 @@ describe("collectFacts", () => {
     expect(noRecordedReason).toBe(true);
   });
 
+  it("keeps a section's span across a fenced # line before the diagram", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Billing",
+        '<!-- baton: {id: billing, kind: intent, verified_at: null, source_paths: ["src/b/**"]} -->',
+        "",
+        "```sh",
+        "# build first",
+        "npm run build",
+        "```",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  P{Payment} --> Q{Queue}",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Payment")],
+      defaultConfig(),
+    );
+    expect(facts.some((f) => f.label === "section" && f.source === ".context/spec.md:3")).toBe(
+      true,
+    );
+  });
+
   it("lists at most MAX_LISTED source files and counts the rest", async () => {
     const root = await makeFixture();
     const files: Record<string, string> = {};
