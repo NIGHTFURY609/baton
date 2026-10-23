@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BatonError } from "../src/core/errors.js";
@@ -13,9 +12,10 @@ import {
   templateDirs,
 } from "../src/core/explain/templates.js";
 import { parseFrontmatter } from "../src/core/frontmatter.js";
+import { makeTempDir } from "./helpers/repo.js";
 
 function freshDirs() {
-  const base = mkdtempSync(join(tmpdir(), "baton-explain-"));
+  const base = makeTempDir("baton-explain-");
   return templateDirs(join(base, "repo"), join(base, "home"));
 }
 

@@ -126,6 +126,14 @@ describe("mission command", () => {
     expect(JSON.parse(r.stdout).text.startsWith(PACKET_HEADER)).toBe(true);
   });
 
+  it("rejects an unknown --format with exit 1", async () => {
+    const root = await fixture();
+    const r = await runCli(["mission", "--format", "yaml"], root);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/--format/);
+    expect(r.stderr).toMatch(/text, json/);
+  });
+
   it("rejects a large budget", async () => {
     const root = await fixture();
     const r = await runCli(["mission", "--budget", "20000"], root);

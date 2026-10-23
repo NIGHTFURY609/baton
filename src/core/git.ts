@@ -166,9 +166,3 @@ export function porcelainPath(line: string): string {
   if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
   return path;
 }
-
-/** Porcelain status lines, for handoffs. */
-export async function statusPorcelain(cwd: string): Promise<string[]> {
-  const out = await git(["status", "--porcelain=v1"], cwd);
-  return out ? out.split("\n") : [];
-}

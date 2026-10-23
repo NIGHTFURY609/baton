@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
@@ -27,7 +26,7 @@ const commit = (file: string, msg: string) => {
 };
 
 beforeAll(() => {
-  repo = mkdtempSync(join(tmpdir(), "baton-git-"));
+  repo = makeTempDir("baton-git-");
   sh("init", "-q");
   commit("README.md", "init");
 });

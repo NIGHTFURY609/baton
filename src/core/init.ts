@@ -113,14 +113,34 @@ function addLines(root: string, path: string, lines: readonly string[]): InitAct
   };
 }
 
+const RULES_FILE = ".context/rules.md";
+
+/**
+ * The AGENTS.md text this run will write, or null when AGENTS.md is left alone.
+ * Rendering parses rules.md (the existing one, unless --force replaces it), so it
+ * runs before the first write: a malformed user rules.md must stop init cleanly.
+ */
+function plannedAgentsMd(root: string, force: boolean): string | null {
+  if (!force && existsSync(join(root, "AGENTS.md"))) return null;
+  const rulesPath = join(root, RULES_FILE);
+  const rules =
+    !force && existsSync(rulesPath)
+      ? readFileSync(rulesPath, "utf8")
+      : template("context/rules.md");
+  try {
+    return renderAgentsMd(template("AGENTS.md"), rules);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new BatonError(message.startsWith(RULES_FILE) ? message : `${RULES_FILE}: ${message}`);
+  }
+}
+
 /** Write the .context/ scaffold, AGENTS.md, CLAUDE.md and the additive git files under `root`. */
 export async function scaffold(root: string, opts: { force: boolean }): Promise<InitAction[]> {
+  const agentsMd = plannedAgentsMd(root, opts.force);
   const actions: InitAction[] = [];
   for (const [path, key] of TEMPLATE_FILES) {
-    const content =
-      path === "AGENTS.md"
-        ? renderAgentsMd(template(key), readFileSync(join(root, ".context/rules.md"), "utf8"))
-        : template(key);
+    const content = path === "AGENTS.md" && agentsMd !== null ? agentsMd : template(key);
     actions.push(writeTemplate(root, path, content, opts.force));
   }
   actions.push(addLines(root, ".gitattributes", GITATTRIBUTES_LINES));

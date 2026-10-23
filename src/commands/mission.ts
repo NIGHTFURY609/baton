@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { loadConfig } from "../core/config.js";
 import { buildMission, parseBudget, writePacketCache } from "../core/mission.js";
 import { action, projectRoot, requireContext } from "./_shared.js";
@@ -6,7 +6,7 @@ import { action, projectRoot, requireContext } from "./_shared.js";
 interface MissionCliOptions {
   budget?: string;
   task?: string;
-  format: string;
+  format: "text" | "json";
 }
 
 /**
@@ -21,7 +21,9 @@ export function registerMission(program: Command): void {
     .description("print the budgeted mission packet for the next session")
     .option("--budget <chars>", "max characters (default from config, <= 10000)")
     .option("--task <id>", "focus the packet on one task instead of the ready queue")
-    .option("--format <fmt>", "text | json", "text")
+    .addOption(
+      new Option("--format <fmt>", "output format").choices(["text", "json"]).default("text"),
+    )
     .action(
       action(async (o: MissionCliOptions) => {
         const root = await projectRoot();

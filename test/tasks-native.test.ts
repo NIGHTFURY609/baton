@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TaskDb } from "../src/core/tasks/native/db.js";
@@ -12,6 +11,7 @@ import {
 } from "../src/core/tasks/native/ids.js";
 import { TaskError } from "../src/core/tasks/native/model.js";
 import { deriveMemoryKey, TaskService } from "../src/core/tasks/native/service.js";
+import { makeTempDir } from "./helpers/repo.js";
 
 // ---- parity with Beads' own golden tests -----------------------------------
 
@@ -94,7 +94,7 @@ const open = (actor = "tester") => {
 const jsonl = () => readFileSync(join(dir, ".context", "tasks.jsonl"), "utf8");
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "baton-tasks-"));
+  dir = makeTempDir("baton-tasks-");
   mkdirSync(join(dir, ".context"));
 });
 afterEach(() => db?.close());

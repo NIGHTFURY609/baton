@@ -11,8 +11,11 @@ import { getTask, readTaskSnapshot } from "./tasks/snapshot.js";
 import type { FreshnessLevel, Task } from "./types.js";
 
 /**
- * Mission packet assembly (ADR 0014): pure text from already-gathered inputs.
- * No IO, no clock, no absolute paths, so the output is deterministic.
+ * Mission packet assembly (ADR 0014). `stateHead`, `buildBlocks` and `assemblePacket` are
+ * pure: text from already-gathered inputs, with no IO, no clock and no absolute
+ * paths, so their output is deterministic. `buildMission` is the impure edge: it reads the
+ * section index, the task snapshot and git history, and takes the clock as an
+ * option. `writePacketCache` is the only function here that writes.
  */
 
 /** Characters kept free for the "Left out for space" line. */

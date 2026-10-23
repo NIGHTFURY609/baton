@@ -215,6 +215,31 @@ describe("command", () => {
     expect(existsSync(join(dir, ".context/spec.md"))).toBe(true);
   });
 
+  it.each([
+    ["a bad kind", "## A\n<!-- baton: {id: a, kind: vibes} -->\n"],
+    ["unparsable YAML", "## A\n<!-- baton: {id: a, kind: [} -->\n"],
+  ])("rejects a malformed user rules.md (%s) before writing anything", async (_name, rules) => {
+    const dir = freshDir();
+    mkdirSync(join(dir, ".context"));
+    writeFileSync(join(dir, ".context/rules.md"), rules);
+    const r = await withHome(makeTempDir(), () => runCli(["init"], dir));
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/^baton: \.context\/rules\.md/);
+    for (const p of PATHS.filter((p) => p !== ".context/rules.md")) {
+      expect(existsSync(join(dir, p))).toBe(false);
+    }
+  });
+
+  it("does not parse rules.md when AGENTS.md will be left alone", async () => {
+    const dir = freshDir();
+    mkdirSync(join(dir, ".context"));
+    writeFileSync(join(dir, ".context/rules.md"), "## A\n<!-- baton: {id: a, kind: vibes} -->\n");
+    writeFileSync(join(dir, "AGENTS.md"), "# mine\n");
+    const actions = await scaffold(dir, { force: false });
+    expect(actions.find((a) => a.path === "AGENTS.md")?.action).toBe("skip");
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toBe("# mine\n");
+  });
+
   it("scaffolds into a folder nested in a repo that stands in for home", async () => {
     const home = freshDir();
     const dir = join(home, "proj");

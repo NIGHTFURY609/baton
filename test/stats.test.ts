@@ -170,6 +170,27 @@ describe("collectStats", () => {
     expect(r.projectDirs).toEqual([]);
   });
 
+  it("does not snapshot a --session file into this project's stats", async () => {
+    const { root, dir } = setup();
+    const sessionPath = join(dir, "foreign.jsonl");
+    writeFileSync(sessionPath, s1());
+    await collectStats(root, { sessionPath });
+    expect(existsSync(join(root, ".context/.cache/stats/foreign.json"))).toBe(false);
+  });
+
+  it("rejects an unreadable --session path with exit 1", async () => {
+    const { root, dir } = setup();
+    const sessionPath = join(dir, "missing.jsonl");
+    await expect(collectStats(root, { sessionPath })).rejects.toMatchObject({
+      exitCode: 1,
+      message: `cannot read ${sessionPath}`,
+    });
+    isolateClaudeConfig();
+    const res = await runCli(["stats", "--session", sessionPath], root);
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toBe(`baton: cannot read ${sessionPath}\n`);
+  });
+
   it("works without .context/", async () => {
     const bare = makeTempDir();
     const projects = makeTempDir();

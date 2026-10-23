@@ -382,7 +382,13 @@ export async function collectStats(root: string, opts: StatsOptions = {}): Promi
   for (const file of files) {
     if (seen.has(file.sessionId)) continue;
     seen.add(file.sessionId);
-    const parsed = parseTranscript(await readFile(file.path, "utf8"));
+    let text: string;
+    try {
+      text = await readFile(file.path, "utf8");
+    } catch {
+      throw new BatonError(`cannot read ${file.path}`);
+    }
+    const parsed = parseTranscript(text);
     const metrics = sessionMetrics(parsed.records, {
       sessionId: file.sessionId,
       root,
@@ -390,7 +396,8 @@ export async function collectStats(root: string, opts: StatsOptions = {}): Promi
       ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
     });
     sessions.push(metrics);
-    if (hasContext) {
+    // --session names a foreign file: snapshotting it would skew this project's stats for good.
+    if (hasContext && !opts.sessionPath) {
       writeFileAtomic(
         join(statsDir, `${file.sessionId}.json`),
         `${JSON.stringify(metrics, null, 2)}\n`,
