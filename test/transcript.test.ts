@@ -219,6 +219,78 @@ describe("redactSecrets", () => {
     expect(out).toContain("[redacted]");
   });
 
+  it.each([
+    ["curl -u :hunter2pass https://api.x.com", ["hunter2pass"]],
+    ["git clone https://alice:p@ss/word@github.com/x.git", ["p@ss", "ss/word", "alice"]],
+    ["psql postgres://u:abc@def@db:5432/x", ["abc", "def"]],
+    ["curl https://opaqueTOKENvalue1234567890@github.com/o/r", ["opaqueTOKENvalue1234567890"]],
+    [
+      "git remote set-url origin https://github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz@github.com/o/r",
+      ["github_pat_", "abcdefghijklmnopqrstuvwxyz"],
+    ],
+    [
+      "export GH=github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz",
+      ["github_pat_", "abcdefghijklmnopqrstuvwxyz"],
+    ],
+    [
+      "curl https://oauth2:glpat-abcdefghij1234567890@gitlab.com/x",
+      ["glpat-", "abcdefghij1234567890"],
+    ],
+    ["echo glpat-abcdefghij1234567890", ["glpat-", "abcdefghij1234567890"]],
+    ["echo AIzaSyA1234567890abcdefghijklmnopqrstuvw", ["AIza", "1234567890abcdefghij"]],
+    ["mysql -u root -pSuperSecret123 db", ["SuperSecret123"]],
+    ["docker login -u bob -p S3cr3tPw registry", ["S3cr3tPw"]],
+    ["node x --pass hunter2", ["hunter2"]],
+    ["http --auth bob:pw123 x.com", ["pw123"]],
+    ["aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG", ["wJalrXUtnFEMI"]],
+  ])("redacts the secret in %s", (input, secrets) => {
+    const out = redactSecrets(input);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+    expect(out).toContain("[redacted]");
+  });
+
+  it("keeps the shape of the commands around redacted secrets", () => {
+    expect(redactSecrets("mysql -u root -pSuperSecret123 db")).toBe(
+      "mysql -u root -p[redacted] db",
+    );
+    expect(redactSecrets("docker login -u bob -p S3cr3tPw registry")).toBe(
+      "docker login -u bob -p [redacted] registry",
+    );
+    expect(redactSecrets("git clone https://alice:p@ss/word@github.com/x.git")).toBe(
+      "git clone https://[redacted]@github.com/x.git",
+    );
+    expect(redactSecrets("git clone ssh://git@github.com/o/r.git")).toBe(
+      "git clone ssh://[redacted]@github.com/o/r.git",
+    );
+  });
+
+  it("leaves ordinary -p flags, ports and URLs alone", () => {
+    expect(redactSecrets("mkdir -p out/dir")).toBe("mkdir -p out/dir");
+    expect(redactSecrets("mkdir -pv out")).toBe("mkdir -pv out");
+    expect(redactSecrets("docker run -p 8080:80 img")).toBe("docker run -p 8080:80 img");
+    expect(redactSecrets("curl http://localhost:8080/a/b@c")).toBe(
+      "curl http://localhost:8080/a/b@c",
+    );
+    expect(redactSecrets("git clone https://github.com/o/r.git")).toBe(
+      "git clone https://github.com/o/r.git",
+    );
+    expect(redactSecrets("jest --passWithNoTests")).toBe("jest --passWithNoTests");
+  });
+
+  it("stays fast on pathological input", () => {
+    const runs = ["-".repeat(100_000), `--${"-".repeat(100_000)}x`, "a-".repeat(50_000)];
+    for (const run of runs) {
+      const t0 = performance.now();
+      const out = summarizeToolUse(
+        { id: "1", name: "Bash", input: { command: run }, isError: false },
+        "/w",
+        "linux",
+      );
+      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(out.length).toBeLessThanOrEqual(90);
+    }
+  });
+
   it("does not mistake the working directory for a password", () => {
     expect(redactSecrets("cd $PWD && pwd")).toBe("cd $PWD && pwd");
     expect(redactSecrets("echo $PWD: here")).toBe("echo $PWD: here");

@@ -241,26 +241,49 @@ export function toolUses(records: TranscriptRecord[]): ToolUse[] {
   return [...uses.values()];
 }
 
+/** Redaction and path shortening look at this many characters of a line; the display cut is 80. */
+const MAX_SCAN = 1024;
+
 /** Mask common credential shapes. Applied to everything that can reach a committed file. */
 export function redactSecrets(text: string): string {
-  return text
-    .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[redacted]")
-    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
-    .replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, "[redacted]")
-    .replace(/\bnpm_[A-Za-z0-9]{36}/g, "[redacted]")
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
-    .replace(/\b(Authorization\s*[:=]\s*)(token|bearer|basic)\s+\S+/gi, "$1$2 [redacted]")
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]*:[^\s/@]+@/gi, "$1[redacted]@")
-    .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]+):\S+/gi, "$1$2:[redacted]")
-    .replace(
-      /(--?[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*)(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
-      "$1$2[redacted]",
-    )
-    .replace(
-      /(?<!\$)\b([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
-      "$1$2=[redacted]",
-    );
+  return (
+    text
+      .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[redacted]")
+      .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
+      .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}/g, "[redacted]")
+      .replace(/\bglpat-[A-Za-z0-9_-]{16,}/g, "[redacted]")
+      .replace(/\bAIza[0-9A-Za-z_-]{30,}/g, "[redacted]")
+      .replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, "[redacted]")
+      .replace(/\bnpm_[A-Za-z0-9]{36}/g, "[redacted]")
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
+      .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
+      .replace(/\b(Authorization\s*[:=]\s*)(token|bearer|basic)\s+\S+/gi, "$1$2 [redacted]")
+      // URL userinfo, with or without a password. The password may contain "@" or "/", so the
+      // colon form runs greedily to the last "@" of the token. "host:8080/a@b" is a port, not userinfo.
+      .replace(
+        /\b([a-z][a-z0-9+.-]*:\/\/)(?:[^\s/@:]*:(?!\d+(?:[/?#]|$))\S*@|[^\s/@:]+@)/gi,
+        "$1[redacted]@",
+      )
+      .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
+      // `mysql -pSECRET` (attached) and `docker login -p SECRET` (separate). Port maps,
+      // `mkdir -pv` and the like are left alone.
+      .replace(/(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))[^\s-]\S{3,}/g, "$1[redacted]")
+      .replace(/(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*"|'[^']*'|\S+)/g, "$1[redacted]")
+      // Each [\w-] run is bounded so a long run of dashes cannot go quadratic.
+      .replace(
+        /(?<![\w-])(--?[\w-]{0,64}?(?:password|passwd|secret|token|api[_-]?key)[\w-]{0,64}|--(?:pass|pw|pwd|auth|credentials?)(?![\w-]))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+        "$1$2[redacted]",
+      )
+      // `aws configure set aws_secret_access_key VALUE`: a space, not "=", before the value.
+      .replace(
+        /(\b(?:set|config|configure)\s+(?:--?[\w-]+\s+){0,4}[\w.:/-]{0,64}(?:secret_access_key|password|passwd|secret|token)[\w.:/-]{0,64}\s+)("[^"]*"|'[^']*'|\S+)/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /(?<!\$)\b([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
+        "$1$2=[redacted]",
+      )
+  );
 }
 
 const MAX_ARG = 80;
@@ -298,7 +321,7 @@ function shortenPathToken(tok: string, root: string, platform: NodeJS.Platform):
 
 /** Redact, optionally shorten out-of-repo absolute paths in free text, then cut to 80 chars. */
 function bounded(text: string, root: string, platform: NodeJS.Platform, paths = false): string {
-  let s = redactSecrets(text);
+  let s = redactSecrets(text.slice(0, MAX_SCAN));
   if (paths) s = s.replace(ABSOLUTE_PATH_TOKEN, (tok) => shortenPathToken(tok, root, platform));
   return s.length > MAX_ARG ? `${s.slice(0, MAX_ARG)}…` : s;
 }
