@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -19,6 +19,18 @@ function freshDir(): string {
   const dir = makeTempDir();
   runGit(dir, "init", "-q");
   return dir;
+}
+
+/** Point init's notion of the home folder at `home` while `fn` runs. */
+async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.BATON_HOME;
+  process.env.BATON_HOME = home;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.BATON_HOME;
+    else process.env.BATON_HOME = previous;
+  }
 }
 
 const PATHS = [
@@ -198,8 +210,42 @@ describe("command", () => {
     const r = await runCli(["init"], dir);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("create .context/spec.md");
+    expect(r.stdout).not.toContain("root:");
     expect(r.stdout).toContain("hooks: Claude Code hooks ship");
     expect(existsSync(join(dir, ".context/spec.md"))).toBe(true);
+  });
+
+  it("scaffolds into a folder nested in a repo that stands in for home", async () => {
+    const home = freshDir();
+    const dir = join(home, "proj");
+    mkdirSync(dir);
+    const r = await withHome(home, () => runCli(["init"], dir));
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain("root:");
+    expect(existsSync(join(dir, ".context/spec.md"))).toBe(true);
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(home, ".context"))).toBe(false);
+    expect(existsSync(join(home, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(home, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(home, ".gitignore"))).toBe(false);
+  });
+
+  it("scaffolds at the git toplevel from a subfolder and prints the root", async () => {
+    const home = makeTempDir();
+    const repo = freshDir();
+    const sub = join(repo, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    const r = await withHome(home, () => runCli(["init"], sub));
+    expect(r.exitCode).toBe(0);
+    const first = r.stdout.split("\n")[0] ?? "";
+    expect(first.startsWith("root: ")).toBe(true);
+    expect(realpathSync.native(first.slice("root: ".length)).toLowerCase()).toBe(
+      realpathSync.native(repo).toLowerCase(),
+    );
+    expect(existsSync(join(repo, ".context/spec.md"))).toBe(true);
+    expect(existsSync(join(repo, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(sub, ".context"))).toBe(false);
+    expect(existsSync(join(sub, "AGENTS.md"))).toBe(false);
   });
 
   it("--no-hooks omits the hooks line", async () => {

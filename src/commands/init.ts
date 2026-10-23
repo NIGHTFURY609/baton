@@ -1,8 +1,24 @@
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { Command } from "commander";
 import { notImplemented } from "../core/errors.js";
+import { resolveExplainRoot } from "../core/explain/root.js";
 import { parseHarnesses, scaffold } from "../core/init.js";
-import { findProjectRoot } from "../core/paths.js";
 import { action } from "./_shared.js";
+
+function samePath(a: string, b: string): boolean {
+  const canon = (p: string): string => {
+    let r = resolve(p);
+    try {
+      r = realpathSync.native(r);
+    } catch {
+      // not on disk: compare the lexical path
+    }
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  return canon(a) === canon(b);
+}
 
 interface InitOptions {
   harness: string;
@@ -29,7 +45,11 @@ export function registerInit(program: Command): void {
         for (const name of ["codex", "gemini"] as const) {
           if (harnesses.includes(name)) notImplemented(`init --harness ${name}`, "Phase 3 (Reach)");
         }
-        const actions = await scaffold(findProjectRoot(), { force: o.force === true });
+        // Not findProjectRoot: that settles on a home-folder repo and would scaffold into ~.
+        const cwd = process.cwd();
+        const root = await resolveExplainRoot(cwd, process.env.BATON_HOME ?? homedir());
+        if (!samePath(root, cwd)) process.stdout.write(`root: ${root}\n`);
+        const actions = await scaffold(root, { force: o.force === true });
         for (const a of actions) {
           process.stdout.write(`${a.action} ${a.path}${a.note ? ` (${a.note})` : ""}\n`);
         }
