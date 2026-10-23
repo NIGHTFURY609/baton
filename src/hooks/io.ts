@@ -69,9 +69,18 @@ export async function readStdin(stream: NodeJS.ReadableStream = process.stdin): 
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** True for `baton hook <event> ...` argument lists (after "hook") the fast path can run. */
+export function isFastHookArgv(args: string[]): boolean {
+  const event = args[0];
+  if (event === undefined || !(HOOK_EVENTS as readonly string[]).includes(event)) return false;
+  return !args.includes("-h") && !args.includes("--help");
+}
+
 export function parseHookInput(raw: string): HookInput {
-  if (!raw.trim()) return {};
-  const value = JSON.parse(raw) as unknown;
+  // PowerShell 5.1 prepends a UTF-8 BOM to piped text.
+  const text = raw.startsWith("﻿") ? raw.slice(1) : raw;
+  if (!text.trim()) return {};
+  const value = JSON.parse(text) as unknown;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("hook stdin must be a JSON object");
   }

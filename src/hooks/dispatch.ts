@@ -1,4 +1,5 @@
-import { findProjectRoot } from "../core/paths.js";
+import { existsSync } from "node:fs";
+import { contextPath, findProjectRoot } from "../core/paths.js";
 import type { Harness } from "../core/types.js";
 import {
   type HookEvent,
@@ -20,23 +21,66 @@ type Handler = (input: HookInput, ctx: HookContext) => Promise<HookResult>;
 
 const noop: Handler = async () => ({ kind: "noop" });
 
+export const PRE_COMPACT_TAIL_BYTES = 262_144;
+export const SESSION_END_TAIL_BYTES = 65_536;
+
+// Every Phase 1 handler checks for .context/ before importing anything: runHandoff
+// would create STATE.md, and the task store would create .context/.cache, in a
+// project that never opted in.
+const hasContext = (ctx: HookContext): boolean => existsSync(contextPath(ctx.root));
+
+const sessionStart: Handler = async (_input, ctx) => {
+  if (!hasContext(ctx)) return { kind: "noop" };
+  const { buildMission, writePacketCache } = await import("../core/mission.js");
+  const { loadConfig } = await import("../core/config.js");
+  const result = await buildMission(ctx.root, await loadConfig(ctx.root));
+  try {
+    await writePacketCache(ctx.root, result);
+  } catch {
+    // Hook stderr is shown on every session start, and the cache is optional (ADR 0014).
+  }
+  return { kind: "context", text: result.text };
+};
+
+function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: number): Handler {
+  return async (input, ctx) => {
+    if (!hasContext(ctx)) return { kind: "noop" };
+    const { runHandoff } = await import("../core/handoff.js");
+    const { loadConfig } = await import("../core/config.js");
+    await runHandoff(ctx.root, await loadConfig(ctx.root), {
+      reason: reasonOf(input),
+      tailBytes,
+      ...(typeof input.transcript_path === "string"
+        ? { transcriptPath: input.transcript_path }
+        : {}),
+    });
+    return { kind: "noop" };
+  };
+}
+
 /**
- * Event -> handler. Every handler is a no-op until its phase lands, so the
- * plugin is safe to install today. Wiring plan (docs/design/architecture.md):
+ * Event -> handler. Core modules load with dynamic import(), so a no-op hook
+ * never pays for them. Wiring (docs/design/architecture.md, ADR 0015):
  *
  * - session-start  -> mission packet as additionalContext; matcher includes
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
- * - pre-compact    -> handoff (deterministic: task store + git), writes STATE.md [Phase 1]
- * - session-end    -> quick handoff; must finish inside the harness budget      [Phase 1]
+ * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md [Phase 1]
+ * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
  * - pre-tool-use   -> deny direct edits to protected state (guards.ts);
- *                     decide --preflight on dependency/migration files         [Phase 2]
- * - post-tool-use  -> mark sections whose source_paths were touched as aging   [Phase 2]
- * - stop           -> opt-in: verify the active task before stopping           [Phase 2]
+ *                     decide --preflight on dependency/migration files         [Phase 2, no-op now]
+ * - post-tool-use  -> mark sections whose source_paths were touched as aging   [Phase 2, no-op now]
+ * - stop           -> opt-in: verify the active task before stopping           [Phase 2, no-op now]
  */
 export const HANDLERS: Record<HookEvent, Handler> = {
-  "session-start": noop,
-  "pre-compact": noop,
-  "session-end": noop,
+  "session-start": sessionStart,
+  "pre-compact": handoffHandler(() => "pre-compact", PRE_COMPACT_TAIL_BYTES),
+  "session-end": handoffHandler(
+    (input) =>
+      typeof input.reason === "string" && input.reason
+        ? `session-end:${input.reason}`
+        : "session-end",
+    SESSION_END_TAIL_BYTES,
+  ),
   "pre-tool-use": noop,
   "post-tool-use": noop,
   stop: noop,
