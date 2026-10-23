@@ -3,6 +3,7 @@ import pkg from "../package.json" with { type: "json" };
 import { registerCompile } from "./commands/compile.js";
 import { registerDecide } from "./commands/decide.js";
 import { registerDrift } from "./commands/drift.js";
+import { registerExplain } from "./commands/explain.js";
 import { registerHandoff } from "./commands/handoff.js";
 import { registerHook } from "./commands/hook.js";
 import { registerInit } from "./commands/init.js";
@@ -31,6 +32,7 @@ export function buildProgram(): Command {
   registerDrift(program);
   registerDecide(program);
   registerVerify(program);
+  registerExplain(program);
   registerCompile(program);
   registerStats(program);
   registerTask(program);

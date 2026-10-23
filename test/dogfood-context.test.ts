@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { ConfigSchema } from "../src/core/config.js";
 import { parseFileSection, parseSections } from "../src/core/frontmatter.js";
+import { loadSectionIndex } from "../src/core/sections.js";
+import { REPO_ROOT } from "./helpers/repo.js";
 
 // baton's own .context/ must always parse with baton's own parser.
 const ctx = join(import.meta.dirname, "..", ".context");
@@ -42,5 +44,13 @@ describe("dogfood .context/", () => {
 
   it("has a valid config", () => {
     expect(() => ConfigSchema.parse(parse(read("config.yaml")))).not.toThrow();
+  });
+
+  it("loads strictly with the section index", async () => {
+    const idx = await loadSectionIndex(REPO_ROOT);
+    expect([...idx.byId.keys()]).toEqual(
+      expect.arrayContaining(["mission-packet", "state", "adr-0007"]),
+    );
+    expect(idx.byId.get("adr-0007")?.meta.supersededBy).toBe("adr-0009");
   });
 });

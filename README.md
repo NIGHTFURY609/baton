@@ -2,7 +2,7 @@
 
 **A continuity layer for coding agents.** Every session starts with the smallest fresh brief, and nothing stale reaches the model.
 
-> Status: **pre-alpha, Phase 0 (dogfood).** The task store (`baton task`, `baton remember`) works. The continuity commands (`mission`, `handoff`, `drift`, …) are scaffolded with their contract and still exit with code 3 ("not implemented"). See [docs/roadmap.md](docs/roadmap.md).
+> Status: **pre-alpha, Phase 0 (dogfood).** The task store (`baton task`, `baton remember`) and `baton explain` (plain-language explanations of a file, dependency or concept, also as `/baton explain`) work. The continuity commands (`mission`, `handoff`, `drift`, …) are scaffolded with their contract and still exit with code 3 ("not implemented"). See [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
@@ -21,9 +21,9 @@ Research and evidence: [docs/research/2026-10-15-research-report.md](docs/resear
 Skills, hooks and an optional MCP adapter are three entry points into one CLI, which is the only thing that writes state. State lives in `.context/` in git.
 
 ```
-skills (/init-spec /checkpoint /handoff /decide /doc-audit) ─┐
-hooks  (SessionStart · PreCompact · SessionEnd · PreToolUse) ─┼─▶ baton CLI ─▶ .context/  task store  git  session log
-MCP    (mission · decide · verify · search, optional)       ─┘
+skills (/baton /init-spec /checkpoint /handoff /decide /doc-audit) ─┐
+hooks  (SessionStart · PreCompact · SessionEnd · PreToolUse)       ─┼─▶ baton CLI ─▶ .context/  task store  git  session log
+MCP    (mission · decide · verify · search, optional)              ─┘
 ```
 
 Details: [architecture](docs/design/architecture.md) · [.context/ format](docs/design/context-format.md) · [metrics](docs/design/metrics.md) · [platform facts](docs/research/2026-10-16-implementation-notes.md).

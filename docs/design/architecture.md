@@ -31,15 +31,25 @@ src/
     glob.ts           tiny glob matcher for source_paths and guards
     transcript.ts     Claude Code JSONL reader, usage de-duplication
     decisions.ts      MADR naming and numbering
+    sections.ts       section index over .context/ (ADR 0012)
+    drift.ts          freshness from git history, dead references, drift log (ADR 0013)
+    verify-doc.ts     verified_at stamping (ADR 0012)
+    mission.ts        packet assembly (ADR 0014)
+    handoff.ts        generated STATE.md (ADR 0015)
+    stats.ts          session metrics and snapshots (ADR 0016)
+    init.ts, templates.generated.ts  scaffolding from embedded templates (ADR 0017)
+    explain/          `baton explain`: target resolution, fact collection, voice templates (ADR 0010)
     tasks/            TaskStore interface + backends
       native/         default store ported from Beads: model, ids, jsonl, db (node:sqlite), service
       beads.ts        optional adapter over an installed `bd`
+      snapshot.ts     read-only task view for mission and handoff
   hooks/
+    entry.ts          fast path for baton hook, skips the commander program (ADR 0015)
     io.ts             stdin parsing, per-harness output rendering
     dispatch.ts       event -> handler, fail-open wrapper
     guards.ts         protected paths, edit-target extraction, shell heuristic
   mcp/server.ts       four-tool MCP adapter (lazy-loaded chunk)
-plugin/               Claude Code plugin: manifest, hooks.json, skills, dist/ (built)
+plugin/               Claude Code plugin: manifest, hooks.json, skills (incl. the /baton router), dist/ (built)
 templates/context/    what `baton init` scaffolds into a project
 .context/             baton's own continuity state (dogfooding)
 ```
@@ -50,11 +60,11 @@ templates/context/    what `baton init` scaffolds into a project
 
 | Command | Reads | Writes | Exit codes | Phase |
 |---|---|---|---|---|
-| `init [--harness] [--no-hooks] [--force]` | templates | `.context/`, `AGENTS.md`, `CLAUDE.md`, hook config | 0, 1 | 1 |
+| `init [--harness] [--no-hooks] [--force]` | templates | `.context/`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes`/`.gitignore` lines (Claude hooks ship in the plugin, ADR 0017) | 0, 1, 3 for codex/gemini | 1 |
 | `mission [--budget] [--task] [--format]` | STATE, task store, spec, decisions, git | `.context/.cache/last-packet.*` | 0, 1 | 1 |
 | `handoff [--reason] [--transcript] [--dry-run]` | task store, git status/diff, transcript tail | `.context/STATE.md` (overwrite) | 0, 1 | 1 |
 | `drift [--format] [--fail-on]` | all sections, git | `.context/.cache/drift.jsonl` | 0, 2 on `--fail-on` hit | 1 |
-| `verify-doc <ids...>` | sections | `verified_at` = HEAD on those sections | 0, 1 | 1 |
+| `verify-doc <ids...>` | sections | `verified_at` = first 12 chars of HEAD on those sections | 0, 1 | 1 |
 | `stats [--session] [--since] [--format]` | transcripts, drift log | `.context/.cache/stats/` snapshots | 0, 1 | 1 |
 | `decide [title] [--preflight] [--supersedes] [--accept] [--spec]` | decisions, spec, code graph (optional) | new ADR; status of superseded ADR | 0, 2 on conflict in preflight | 2 |
 | `verify <task> [--no-diff]` | task check command, git diff | closes task in the store | 0, 2 on failed check | 2 |
@@ -62,6 +72,7 @@ templates/context/    what `baton init` scaffolds into a project
 | `task create\|list\|show\|ready\|blocked\|update\|close\|reopen\|delete\|dep\|comment\|import` | `.context/tasks.jsonl` (via cache) | `.context/tasks.jsonl` | 0, 1, 2 on refused state change (claimed, blocked, cycle) | done |
 | `remember \| recall \| forget \| memories` | `.context/memories.jsonl` | `.context/memories.jsonl` | 0, 1 | done |
 | `hook <event> [--harness]` | stdin JSON | per handler | 0 always, except structured denies | 1–2 |
+| `explain <thing> [--as] [--format]` · `explain -c/-p/-s/--force` · `--delete` · `--templates` | `.context/`, `docs/`, `package.json`, git file list, templates | `.context/explain/`, `~/.baton/explain/` (create/delete only) | 0, 1, 2 on tie or refused template change | side track |
 | `mcp` | — | — (delegates to core) | — | 3 |
 
 Exit codes: `0` ok · `1` error · `2` check failed / blocked · `3` not implemented yet (`src/core/errors.ts`).
@@ -81,7 +92,7 @@ Claude Code wiring ships in `plugin/hooks/hooks.json` (exec form: `node ${CLAUDE
 
 ## Performance budget
 
-Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold measurement: ~75 ms for a no-op hook vs ~35 ms for bare `node`).
+Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold measurement: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11: bare node 53 ms, the full bundle 142 ms. `baton hook` therefore bypasses the commander program (ADR 0015).
 
 ## Integrations (consume, do not replace)
 
@@ -89,4 +100,4 @@ Hooks run on every session start and every guarded tool call. Target **< 150 ms*
 - **Decisions:** MADR 4.0 files, adr-kit compatible.
 - **Impact:** optional code-graph MCP for `decide --preflight` (Phase 2+).
 - **Rules:** output compatible with rulesync-class generators.
-- **Spec/plan authoring:** upstream (superpowers, Spec Kit). baton's only authoring skill is `/init-spec`.
+- **Spec/plan authoring:** upstream (superpowers, Spec Kit). baton's only authoring skill is `/init-spec`. The `/baton` skill is a router, not an authoring skill: `/baton <command>` runs the CLI, and `/baton explain` writes an answer in a chosen voice from `baton explain` output.
