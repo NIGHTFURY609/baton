@@ -291,30 +291,35 @@ function redactHead(head: string): string {
       .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]*)([^\s:]*):\S+/gi, "$1$2:[redacted]")
       // openssl pass-phrase syntax (`-passin pass:SECRET`, `-pass pass:SECRET`, ...). `env:` and
       // `file:` name where the secret lives, not the secret, and are kept.
-      .replace(/\bpass:\S+/g, "pass:[redacted]")
+      .replace(/\bpass:("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g, "pass:[redacted]")
       // `mysql -pSECRET` and `mysql -p"my secret"` (attached), `docker login -p SECRET` (separate).
       // Port maps, `mkdir -pv` and the like are left alone. A bare `-password`, `-passwd`,
       // `-passphrase`, `-passin`, `-passout`, `-pass`, `-pw` or `-pwd` flag is left to the flag
       // rule below, which redacts the value after it. An unclosed quote runs to the end of the text.
       .replace(/(?<![\w-])(-p)(?:"[^"]*(?:"|$)|'[^']*(?:'|$))/g, "$1[redacted]")
       .replace(/(?<![\w-])(-p)(?!\d+(?::\d+){0,2}(?:\s|$))[^\s-]\S{3,}/g, (m, flag: string) =>
-        /^-p(?:ass(?:word|wd|phrase|in|out)?|wd?)(?:[^\w-]|$)/i.test(m) ? m : `${flag}[redacted]`,
+        /^-p(?:ass(?:word|wd|phrase|in|out)?|wd?)(?:=|\s|$)/i.test(m) ? m : `${flag}[redacted]`,
       )
       .replace(
         /(\b(?:login|sshpass)\b[^\n]*?\s-p\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g,
         "$1[redacted]",
       )
       // Capital `-P` is a password only for these: `zip -P SECRET`, `unzip -P SECRET`, `7z a -P SECRET`.
+      // The search stops at `&&`, `||`, `;` and `|`, so a later `grep -P` is left alone.
       .replace(
-        /(\b(?:zip|unzip|7z|7za|7zr)\b[^\n]*?\s-P\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g,
+        /(\b(?:zip|unzip|7z|7za|7zr)\b[^\n&|;]*?\s-P\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g,
         "$1[redacted]",
       )
       // `openssl enc -k SECRET`
       .replace(/(\bopenssl\b[^\n]*?\s-k\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g, "$1[redacted]")
-      // PowerShell: `-Password (ConvertTo-SecureString 'SECRET' -AsPlainText -Force)`
-      .replace(
-        /(\bConvertTo-SecureString\s+(?:-String\s+)?)("[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s)]+)/gi,
-        "$1[redacted]",
+      // PowerShell: `-Password (ConvertTo-SecureString 'SECRET' -AsPlainText -Force)`. Every quoted
+      // literal in the cmdlet's arguments (up to `)`, `|`, `;` or the end) goes, wherever it sits,
+      // as does an unquoted value after `-String` or in first position.
+      .replace(/\bConvertTo-SecureString(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^)|;"'])*/gi, (seg) =>
+        seg
+          .replace(/"[^"]*(?:"|$)|'[^']*(?:'|$)/g, "[redacted]")
+          .replace(/(\s-String\s+)[^\s)|;[]+/gi, "$1[redacted]")
+          .replace(/^(ConvertTo-SecureString\s+)[^\s)|;[-][^\s)|;[]*/i, "$1[redacted]"),
       )
       // Each [\w-] run is bounded so a long run of dashes cannot go quadratic.
       .replace(

@@ -258,6 +258,22 @@ describe("redactSecrets", () => {
     ["openssl enc -aes256 -pass pass:hunter2 -in f", ["hunter2"]],
     ["openssl enc -aes256 -k hunter2 -in f", ["hunter2"]],
     ["mysql -pAssword hunter2", ["hunter2"]],
+    ["mysql -pW@ter123 db", ["W@ter123", "ter123"]],
+    ["mysql -pWd!x9z db", ["Wd!x9z", "x9z"]],
+    ["mysql -pAss!123 db", ["Ass!123", "!123"]],
+    ["mysql -pW.1234 db", ["W.1234", "1234"]],
+    ["mysql -pW:1234 db", ["W:1234", "1234"]],
+    ["mysql -pw@ter123 db", ["w@ter123", "ter123"]],
+    ["mysql -pass!123 db", ["pass!123", "!123"]],
+    ["openssl rsa -passin pass:'hunter2 bravo' -in k", ["hunter2", "bravo"]],
+    ['openssl rsa -passin pass:"hunter2 bravo" -in k', ["hunter2", "bravo"]],
+    ['echo pass:"hunter2 bravo', ["hunter2", "bravo"]],
+    ["ConvertTo-SecureString -AsPlainText -Force -String 'hunter2'", ["hunter2"]],
+    ["ConvertTo-SecureString -AsPlainText 'hunter2' -Force", ["hunter2"]],
+    ['ConvertTo-SecureString "hunter2 bravo" -AsPlainText -Force', ["hunter2", "bravo"]],
+    ["ConvertTo-SecureString -String hunter2 -AsPlainText -Force", ["hunter2"]],
+    ["convertto-securestring hunter2 -AsPlainText -Force", ["hunter2"]],
+    ["zip -r a.zip . -P hunter2 && grep -P x f", ["hunter2"]],
     ['mysql -p"alpha bravo charlie', ["alpha", "bravo", "charlie"]],
     ["mysql -p'alpha bravo charlie", ["alpha", "bravo", "charlie"]],
     ['tool --password "alpha bravo charlie', ["alpha", "bravo", "charlie"]],
@@ -307,6 +323,11 @@ describe("redactSecrets", () => {
     );
     expect(redactSecrets("jest --passWithNoTests")).toBe("jest --passWithNoTests");
     expect(redactSecrets("git log -p")).toBe("git log -p");
+    // The zip `-P` search stops at command separators, so a later `grep -P` keeps its pattern.
+    expect(redactSecrets("zip a.zip f && grep -P foo\\d x")).toBe(
+      "zip a.zip f && grep -P foo\\d x",
+    );
+    expect(redactSecrets("unzip a.zip | grep -P foo x")).toBe("unzip a.zip | grep -P foo x");
     expect(redactSecrets("scp -P 2222 f h:")).toBe("scp -P 2222 f h:");
     expect(redactSecrets("openssl enc -kfile k.bin -in f")).toBe("openssl enc -kfile k.bin -in f");
     expect(redactSecrets("openssl x509 -in c.pem -noout")).toBe("openssl x509 -in c.pem -noout");
