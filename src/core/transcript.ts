@@ -244,21 +244,35 @@ export function toolUses(records: TranscriptRecord[]): ToolUse[] {
 /** Mask common credential shapes. Applied to everything that can reach a committed file. */
 export function redactSecrets(text: string): string {
   return text
-    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, "[redacted]")
+    .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, "[redacted]")
     .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
     .replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, "[redacted]")
+    .replace(/\bnpm_[A-Za-z0-9]{36}/g, "[redacted]")
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
+    .replace(/\b(Authorization\s*[:=]\s*)(token|bearer|basic)\s+\S+/gi, "$1$2 [redacted]")
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[redacted]@")
+    .replace(/\b(curl\b[^\n]*?\s(?:-u|--user)[\s=]+)([^\s:]+):\S+/gi, "$1$2:[redacted]")
     .replace(
-      /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
-      "$1=[redacted]",
+      /(--?[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*)(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+      "$1$2[redacted]",
+    )
+    .replace(
+      /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_]*)(["']?)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi,
+      "$1$2=[redacted]",
     );
 }
 
 const MAX_ARG = 80;
 
-function bounded(text: string): string {
-  const s = redactSecrets(text);
+/** Windows drive paths, and POSIX paths under a home-like folder, inside free text. */
+const ABSOLUTE_PATH_TOKEN =
+  /(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s"'`<>|;&()]+|(?<![\w.:~/-])\/(?:home|Users|root)\/[^\s"'`<>|;&()]+/g;
+
+/** Redact, optionally shorten out-of-repo absolute paths in free text, then cut to 80 chars. */
+function bounded(text: string, root: string, platform: NodeJS.Platform, paths = false): string {
+  let s = redactSecrets(text);
+  if (paths) s = s.replace(ABSOLUTE_PATH_TOKEN, (tok) => shownPath(tok, root, platform));
   return s.length > MAX_ARG ? `${s.slice(0, MAX_ARG)}…` : s;
 }
 
@@ -287,16 +301,19 @@ export function summarizeToolUse(
   let line: string;
   if (PATH_TOOLS.has(t.name)) {
     const p = str(t.input.file_path) ?? str(t.input.notebook_path);
-    line = p ? `${t.name} ${bounded(shownPath(p, root, platform))}` : t.name;
+    line = p ? `${t.name} ${bounded(shownPath(p, root, platform), root, platform)}` : t.name;
   } else if (t.name === "Bash") {
     const cmd = str(t.input.command);
-    line = cmd === undefined ? t.name : `Bash: ${bounded(cmd.split(/\r?\n/)[0] ?? "")}`;
+    line =
+      cmd === undefined
+        ? t.name
+        : `Bash: ${bounded(cmd.split(/\r?\n/)[0] ?? "", root, platform, true)}`;
   } else if (t.name === "Grep" || t.name === "Glob") {
     const pattern = str(t.input.pattern);
-    line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern)}`;
+    line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern, root, platform, true)}`;
   } else if (t.name === "Task" || t.name === "Agent") {
     const d = str(t.input.description);
-    line = d === undefined ? t.name : `${t.name}: ${bounded(d)}`;
+    line = d === undefined ? t.name : `${t.name}: ${bounded(d, root, platform)}`;
   } else {
     line = t.name;
   }

@@ -193,4 +193,80 @@ describe("redactSecrets", () => {
     expect(redactSecrets("API_KEY=xyz123 npm start")).toBe("API_KEY=[redacted] npm start");
     expect(redactSecrets("npm run check")).toBe("npm run check");
   });
+
+  it.each([
+    ["git clone https://alice:hunter2pass@example.com/r.git", "hunter2pass"],
+    ["DATABASE_URL=postgres://u:pw123456@h/db", "pw123456"],
+    ['{"password":"hunter2"}', "hunter2"],
+    ['{"api_key": "abcdef123456"}', "abcdef123456"],
+    ["mysql --password hunter2", "hunter2"],
+    ["mysql --password=hunter2", "hunter2"],
+    ["tool --api-key xyz", "xyz"],
+    ["curl -u alice:hunter2 https://example.com", "hunter2"],
+    ["curl --user alice:hunter2 https://example.com", "hunter2"],
+    ["STRIPE=sk_live_abcdefghijklmnop1234", "abcdefghijklmnop1234"],
+    [`//registry:_authToken=npm_${"a".repeat(36)}`, "a".repeat(36)],
+    [`NPM=npm_${"b".repeat(36)}`, "b".repeat(36)],
+    ["curl -H 'Authorization: token abcdef123456'", "abcdef123456"],
+    ["Authorization: Bearer abcdef123456", "abcdef123456"],
+    ["Authorization: basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+  ])("redacts %s", (input, secret) => {
+    const out = redactSecrets(input);
+    expect(out).not.toContain(secret);
+    expect(out).toContain("[redacted]");
+  });
+
+  it("keeps the non-secret parts of redacted commands", () => {
+    expect(redactSecrets("git clone https://alice:hunter2pass@example.com/r.git")).toBe(
+      "git clone https://[redacted]@example.com/r.git",
+    );
+    expect(redactSecrets("curl -u alice:hunter2 https://example.com")).toBe(
+      "curl -u alice:[redacted] https://example.com",
+    );
+    expect(redactSecrets("mysql --password hunter2 -h db")).toBe(
+      "mysql --password [redacted] -h db",
+    );
+  });
+});
+
+describe("absolute paths inside Bash, Glob and Grep arguments", () => {
+  const summary = (
+    name: string,
+    input: Record<string, unknown>,
+    root: string,
+    p: NodeJS.Platform,
+  ) =>
+    recentToolCalls(parseTranscript(toJsonl([toolUse("p", name, input)])).records, root, 1, p)[0];
+
+  it("shortens out-of-repo Windows and POSIX paths", () => {
+    const win = summary(
+      "Bash",
+      { command: "cat C:\\Users\\jeswi\\.aws\\credentials" },
+      "c:\\work\\demo",
+      "win32",
+    );
+    expect(win).toBe("Bash: cat …/credentials");
+    expect(win).not.toContain("jeswi");
+    expect(summary("Bash", { command: "cat C:/Users/jeswi/.aws/credentials" }, "/w", "linux")).toBe(
+      "Bash: cat …/credentials",
+    );
+    expect(summary("Bash", { command: "cat /home/alice/.ssh/id_rsa" }, "/w", "linux")).toBe(
+      "Bash: cat …/id_rsa",
+    );
+    expect(summary("Grep", { pattern: "/Users/alice/notes.md" }, "/w", "linux")).toBe(
+      "Grep …/notes.md",
+    );
+    expect(summary("Glob", { pattern: "C:\\Users\\jeswi\\docs\\*.md" }, "/w", "linux")).toBe(
+      "Glob …/*.md",
+    );
+  });
+
+  it("makes paths under the repo root relative and leaves other tokens alone", () => {
+    expect(
+      summary("Bash", { command: "cat C:\\Work\\Demo\\src\\a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Bash: cat src/a.ts");
+    expect(summary("Bash", { command: "ls /dev/null https://x.dev/home/y" }, "/w", "linux")).toBe(
+      "Bash: ls /dev/null https://x.dev/home/y",
+    );
+  });
 });
