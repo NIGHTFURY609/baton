@@ -1,7 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { afterAll } from "vitest";
+import { loadConfig } from "../../src/core/config.js";
+import type { TaskService } from "../../src/core/tasks/native/service.js";
+import { openTaskService } from "../../src/core/tasks/native/store.js";
 
 // This machine's home folder (C:/Users/jeswi) is a git repo. Without a ceiling,
 // git run inside any temp dir would find it, and "no git" tests would see its
@@ -33,9 +37,26 @@ export const CONTEXT_FIXTURE = {
     '---\nid: adr-0002\nkind: decision\nstatus: "superseded by ADR-0001"\ndate: 2026-10-19\nverified_at: null\nsource_paths: []\nspec_sections: [auth]\n---\n# Use passwords\n\nPasswords.\n',
 } as const satisfies Record<string, string>;
 
-/** The only way tests make plain temp dirs. Tests do not clean up; the OS temp folder does. */
+const createdDirs = new Set<string>();
+
+// Every dir made through makeTempDir is removed when its test file finishes. A dir that is
+// still held open on Windows (EBUSY, a SQLite handle) is left for the OS temp cleanup.
+afterAll(() => {
+  for (const dir of createdDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      // best effort
+    }
+  }
+  createdDirs.clear();
+});
+
+/** The only way tests make plain temp dirs; they are removed after the test file runs. */
 export function makeTempDir(prefix?: string): string {
-  return mkdtempSync(join(tmpdir(), prefix ?? "baton-test-"));
+  const dir = mkdtempSync(join(tmpdir(), prefix ?? "baton-test-"));
+  createdDirs.add(dir);
+  return dir;
 }
 
 /** Write `files` (repo path -> content) under `root`. Bytes are written as given ("\r\n" stays). */
@@ -77,7 +98,7 @@ export function commitAll(root: string, message: string): string {
  * A temp dir holding `files` (default CONTEXT_FIXTURE), a git repo with one
  * commit unless `opts.git === false`.
  *
- * `findProjectRoot` (an existsSync walk) ignores GIT_CEILING_DIRECTORIES. A
+ * `findContextRoot` (an existsSync walk) ignores GIT_CEILING_DIRECTORIES. A
  * fixture with `.context/` is its own project root; a dir that must count as
  * "no project" needs `runGit(dir, "init", "-q")`.
  */
@@ -113,5 +134,20 @@ export function stampFixture(root: string, sha12: string): void {
     if (file === template) continue;
     const text = readFileSync(file, "utf8");
     writeFileSync(file, text.replaceAll("verified_at: null", `verified_at: "${sha12}"`));
+  }
+}
+
+/** Open the native task service for `root` as `actor`, run `fn`, and always close the db. */
+export async function withService<T>(
+  root: string,
+  actor: string,
+  fn: (s: TaskService) => T,
+): Promise<T> {
+  const config = await loadConfig(root);
+  const { service, db } = openTaskService(root, config, { actor });
+  try {
+    return await fn(service);
+  } finally {
+    db.close();
   }
 }

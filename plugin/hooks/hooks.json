@@ -1,5 +1,5 @@
 {
-  "description": "baton continuity hooks. All handlers are no-ops until their phase lands (see docs/design/architecture.md).",
+  "description": "baton continuity hooks: SessionStart injects the mission packet; PreCompact and SessionEnd regenerate .context/STATE.md; PreToolUse and PostToolUse are no-ops until Phase 2 (docs/design/architecture.md).",
   "hooks": {
     "SessionStart": [
       {
@@ -40,7 +40,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",

@@ -9,11 +9,11 @@ A checkpoint turns what just happened into durable, structured state. It never w
 
 ## Steps
 
-1. For each task you finished this session, run `baton verify <task-id>`. If the check fails, leave the task open and say why. Never mark a task done any other way.
+1. For each task you finished this session, run `baton verify <task-id>`. Until Phase 2, `verify` exits 3. In that case, run the task's check yourself (`baton task show <task-id>` lists it as the `check:` label). Only if it exits 0, close the task with `baton task close <task-id> --reason "check passed: <command>"`. If the check fails, leave the task open and say why. Never mark a task done any other way.
 2. Gotchas: for each non-obvious thing learned (a tool quirk, an environment fact, a pattern that worked), append a short bullet to the matching `.context/knowledge/<topic>.md`. Create the topic file with frontmatter (`id`, `kind: knowledge`, `verified_at: null`, `source_paths`) if it does not exist. One fact per bullet; no narrative.
 3. If a spec section you relied on turned out wrong, do not edit it silently: tell the user, and propose a `baton decide` record if the change is load-bearing.
 4. Run `baton handoff --reason manual` to regenerate `.context/STATE.md`.
-5. Run `baton drift` and mention any section that became stale.
+5. Run `baton drift`. Mention any section that became stale or aging. For sections you confirmed are still true, `baton verify-doc <id>` re-stamps them.
 
 ## Rules
 

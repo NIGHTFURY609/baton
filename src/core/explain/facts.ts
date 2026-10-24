@@ -1,11 +1,12 @@
 import { extname } from "node:path";
 import type { Config } from "../config.js";
+import { evaluateFreshness } from "../drift.js";
+import { fencedLines, findFences } from "../fences.js";
 import { classifyFreshness } from "../freshness.js";
-import { commitsTouching } from "../git.js";
 import { matchesAny } from "../glob.js";
 import { CONTEXT_DIR } from "../paths.js";
 import type { FreshnessLevel, Section } from "../types.js";
-import { findFences, headingTargets, type RepoIndex, readLines, type Target } from "./targets.js";
+import { headingTargets, type RepoIndex, readLines, skip, type Target } from "./targets.js";
 
 /**
  * The evidence `baton explain` answers from: literal facts read out of the repo,
@@ -55,7 +56,7 @@ const LABEL_ORDER: FactLabel[] = [
   "import",
 ];
 
-/** The heading syntax `parseSections` uses to close a section (fence-unaware, like the parser). */
+/** The heading syntax `parseSections` uses to close a section (callers skip fenced lines, like the parser). */
 const HEADING_LINE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"]);
@@ -115,7 +116,7 @@ function basename(path: string): string {
 
 class Collector {
   private readonly lineCache = new Map<string, string[] | null>();
-  private readonly commitCache = new Map<string, number>();
+  private freshness?: Promise<Map<string, FreshnessLevel>>;
 
   constructor(
     private readonly index: RepoIndex,
@@ -157,23 +158,36 @@ class Collector {
 
   // ------------------------------------------------------------ provenance
 
+  /**
+   * Labels come from the same `evaluateFreshness` that `drift` and `mission` use
+   * (ADR 0013), run once per collection, lazily, over the index's own sections.
+   */
   private async provenance(section: Section): Promise<Provenance> {
-    const { meta } = section;
-    let commitsSince = 0;
-    if (meta.verifiedAt) {
-      const key = `${section.file}\0${meta.id}`;
-      let cached = this.commitCache.get(key);
-      if (cached === undefined) {
-        try {
-          cached = await commitsTouching(this.index.root, meta.verifiedAt, meta.sourcePaths);
-        } catch {
-          cached = 0; // unknown sha, shallow clone, no git: nothing to count
-        }
-        this.commitCache.set(key, cached);
-      }
-      commitsSince = cached;
-    }
-    return classifyFreshness({ meta, commitsSince }, this.config.freshness.staleAfter).level;
+    const key = (s: Section) => `${s.file}\0${s.meta.id}`;
+    this.freshness ??= evaluateFreshness(
+      {
+        root: this.index.root,
+        sections: [...this.index.contextSections, ...this.index.decisions.map((d) => d.section)],
+      },
+      this.config,
+    )
+      .then((r) => new Map(r.sections.map((f) => [key(f.section), f.result.level])))
+      .catch((err: unknown) => {
+        // A git failure (corrupt index, oversized output) must not sink the answer:
+        // report it and fall back to the frontmatter-only label below.
+        const message = err instanceof Error ? err.message : String(err);
+        skip(
+          this.index.skipped,
+          "<root>",
+          new Error(`freshness unavailable: ${message.split("\n")[0]?.trim() || "unknown error"}`),
+        );
+        return new Map<string, FreshnessLevel>();
+      });
+    return (
+      (await this.freshness).get(key(section)) ??
+      classifyFreshness({ meta: section.meta, commitsSince: 0 }, this.config.freshness.staleAfter)
+        .level
+    );
   }
 
   private isDecision(section: Section): boolean {
@@ -298,16 +312,20 @@ class Collector {
    */
   private async enclosingDoc(target: Target & { kind: "mermaid" }): Promise<Fact[]> {
     if (target.source.startsWith(`${CONTEXT_DIR}/`)) {
-      let best: Section | null = null;
-      for (const s of [
+      // Nested sections are indexed too: walk the candidates from the nearest one
+      // above the fence upward and take the innermost whose span still reaches it.
+      const candidates = [
         ...this.index.contextSections,
         ...this.index.decisions.map((d) => d.section),
-      ]) {
-        if (s.file !== target.source || s.line > target.line) continue;
-        if (!best || s.line > best.line) best = s;
+      ]
+        .filter((s) => s.file === target.source && s.line <= target.line)
+        .sort((a, b) => b.line - a.line);
+      for (const s of candidates) {
+        if (await this.spanReaches(s, target.line)) {
+          return [await this.sectionFact(s, this.isDecision(s))];
+        }
       }
-      if (!best || !(await this.spanReaches(best, target.line))) return [];
-      return [await this.sectionFact(best, this.isDecision(best))];
+      return [];
     }
     const lines = await this.lines(target.source);
     if (!lines) return [];
@@ -331,7 +349,9 @@ class Collector {
     const own = HEADING_LINE.exec(lines[section.line - 1] ?? "");
     if (!own) return true;
     const level = (own[1] ?? "#").length;
+    const fenced = fencedLines(lines);
     for (let i = section.line; i < line - 1; i++) {
+      if (fenced[i]) continue;
       const h = HEADING_LINE.exec(lines[i] ?? "");
       if (h && (h[1] ?? "#").length <= level) return false;
     }

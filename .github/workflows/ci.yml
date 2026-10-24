@@ -25,6 +25,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run validate:skills
+      - run: npm run smoke:hooks
       - name: Smoke-test the CLI and a hook
         shell: bash
         run: |

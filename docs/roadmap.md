@@ -4,7 +4,7 @@ Four phases, about 13 weeks, each gated on a measured result. Nothing ships befo
 
 ![roadmap](research/media/roadmap.png)
 
-This file lists phase deliverables and gates only. Work items live in the task store (`baton task ready`): Phase 0 is epic `bt-kmz`, Phase 1 is epic `bt-s9g`. Done so far: scaffold (all commands stubbed, exit 3) and the native task store (ADR 0009).
+This file lists phase deliverables and gates only. Work items live in the task store (`baton task ready`): Phase 0 is epic `bt-kmz`, Phase 1 is epic `bt-s9g`. Done so far: the scaffold, the native task store (ADR 0009) and the Phase 1 deliverables below, built and reviewed; the Phase 1 gate (measured start tokens and corrections) is still to be run. Still stubbed and exiting 3: `decide`, `verify`, `compile` (Phase 2), `mcp` and `init --harness codex|gemini` (Phase 3).
 
 ## Phase 0 · Dogfood (2 weeks) — gate: baseline captured
 

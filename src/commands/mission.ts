@@ -1,6 +1,13 @@
-import type { Command } from "commander";
-import { notImplemented } from "../core/errors.js";
-import { action } from "./_shared.js";
+import { type Command, Option } from "commander";
+import { loadConfig } from "../core/config.js";
+import { buildMission, parseBudget, writePacketCache } from "../core/mission.js";
+import { action, projectRoot, requireContext } from "./_shared.js";
+
+interface MissionCliOptions {
+  budget?: string;
+  task?: string;
+  format: "text" | "json";
+}
 
 /**
  * Print the mission packet: STATE head, ready tasks, spec sections tagged to
@@ -14,10 +21,28 @@ export function registerMission(program: Command): void {
     .description("print the budgeted mission packet for the next session")
     .option("--budget <chars>", "max characters (default from config, <= 10000)")
     .option("--task <id>", "focus the packet on one task instead of the ready queue")
-    .option("--format <fmt>", "text | json", "text")
+    .addOption(
+      new Option("--format <fmt>", "output format").choices(["text", "json"]).default("text"),
+    )
     .action(
-      action(async () => {
-        notImplemented("mission", "Phase 1 (MVP)");
+      action(async (o: MissionCliOptions) => {
+        const root = await projectRoot();
+        requireContext(root);
+        const config = await loadConfig(root);
+        const maxChars = parseBudget(o.budget, config.packet.maxChars);
+        const result = await buildMission(root, config, {
+          maxChars,
+          ...(o.task === undefined ? {} : { taskId: o.task }),
+        });
+        try {
+          await writePacketCache(root, result);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`baton: could not write packet cache: ${message}\n`);
+        }
+        process.stdout.write(
+          o.format === "json" ? `${JSON.stringify(result, null, 2)}\n` : `${result.text}\n`,
+        );
       }),
     );
 }

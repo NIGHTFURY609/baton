@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { ADR_FILE_RE } from "./decisions.js";
+import { ADR_FILE_RE, adrId, adrNumberFrom, statusKind } from "./decisions.js";
 import { BatonError, ExitCode } from "./errors.js";
 import { parseFileSection, parseFrontmatter, parseSections } from "./frontmatter.js";
 import { contextPath } from "./paths.js";
@@ -165,6 +165,19 @@ export async function loadSectionIndex(
     }
     byId.set(s.meta.id, s);
     sections.push(s);
+  }
+
+  // Derived chain (ADR 0018): an accepted record's `supersedes` marks its target
+  // superseded even when the target's status was never rewritten. A proposed
+  // successor marks nothing.
+  for (const s of sections) {
+    if (s.doc !== "decision" || !s.adr?.supersedes || s.meta.supersededBy) continue;
+    if (statusKind(s.adr.status) !== "accepted") continue;
+    const n = adrNumberFrom(s.adr.supersedes);
+    const t = n === null ? undefined : byId.get(adrId(n));
+    if (t && t.doc === "decision" && t !== s && !t.meta.supersededBy) {
+      t.meta.supersededBy = s.meta.id;
+    }
   }
 
   if (problems.length > 0 && !opts.lenient) {

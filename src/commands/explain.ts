@@ -1,9 +1,7 @@
-import { homedir } from "node:os";
 import nodePath, { type PlatformPath } from "node:path";
 import type { Command } from "commander";
 import { BatonError, ExitCode } from "../core/errors.js";
 import { explain, renderText } from "../core/explain/index.js";
-import { resolveExplainRoot } from "../core/explain/root.js";
 import {
   createTemplate,
   deleteTemplate,
@@ -11,7 +9,7 @@ import {
   type Scope,
   templateDirs,
 } from "../core/explain/templates.js";
-import { action } from "./_shared.js";
+import { action, homeDir, projectRoot } from "./_shared.js";
 
 interface ExplainOptions {
   as?: string;
@@ -114,9 +112,8 @@ export function registerExplain(program: Command): void {
         const scope = scopeName as Scope;
         rejectInapplicable(opts, query !== "");
 
-        const home = process.env.BATON_HOME ?? homedir();
-        // Not findProjectRoot: that settles on a home-folder repo and would index ~.
-        const root = await resolveExplainRoot(process.cwd(), home);
+        const home = homeDir();
+        const root = await projectRoot();
         const dirs = templateDirs(root, home);
         const where = { root, home, personalDir: dirs.personal };
 

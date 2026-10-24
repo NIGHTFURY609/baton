@@ -1,9 +1,9 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, defaultConfig } from "../src/core/config.js";
 import { adrFileName, nextAdrNumber, slugify } from "../src/core/decisions.js";
+import { makeTempDir } from "./helpers/repo.js";
 
 describe("decisions", () => {
   it("slugifies titles into MADR file names", () => {
@@ -14,7 +14,7 @@ describe("decisions", () => {
   });
 
   it("finds the next free number", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "baton-adr-"));
+    const dir = makeTempDir("baton-adr-");
     expect(await nextAdrNumber(dir)).toBe(1);
     writeFileSync(join(dir, "0000-template.md"), "");
     writeFileSync(join(dir, "0003-x.md"), "");

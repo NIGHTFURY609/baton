@@ -197,6 +197,44 @@ describe("collectFacts", () => {
     expect(noRecordedReason).toBe(false);
   });
 
+  it("attaches the innermost nested section whose span reaches the diagram", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Billing",
+        '<!-- baton: {id: billing, kind: intent, verified_at: null, source_paths: ["src/b/**"]} -->',
+        "",
+        "Billing overview.",
+        "",
+        "### Invoices",
+        '<!-- baton: {id: invoices, kind: intent, verified_at: null, source_paths: ["src/b/**"]} -->',
+        "",
+        "Invoices are immutable.",
+        "",
+        "### Notes",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  P{Payment} --> Q{Queue}",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Payment")],
+      defaultConfig(),
+    );
+    // The diagram sits under "### Notes", which closed "Invoices": Billing is the innermost that reaches it.
+    expect(facts.some((f) => f.label === "section" && f.source === ".context/spec.md:3")).toBe(
+      true,
+    );
+    expect(facts.some((f) => f.source === ".context/spec.md:8")).toBe(false);
+  });
+
   it("does not attach a section to a diagram under a later unmarked heading", async () => {
     const root = await makeFixture();
     await writeFiles(root, {
@@ -226,6 +264,38 @@ describe("collectFacts", () => {
     expect(facts.some((f) => f.label === "section" || f.label === "decision")).toBe(false);
     expect(facts.some((f) => f.label === "doc")).toBe(false);
     expect(noRecordedReason).toBe(true);
+  });
+
+  it("keeps a section's span across a fenced # line before the diagram", async () => {
+    const root = await makeFixture();
+    await writeFiles(root, {
+      ".context/spec.md": [
+        "# Spec",
+        "",
+        "## Billing",
+        '<!-- baton: {id: billing, kind: intent, verified_at: null, source_paths: ["src/b/**"]} -->',
+        "",
+        "```sh",
+        "# build first",
+        "npm run build",
+        "```",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  P{Payment} --> Q{Queue}",
+        "```",
+        "",
+      ].join("\n"),
+    });
+    const index = await buildIndex(root);
+    const { facts } = await collectFacts(
+      index,
+      [pick(index, "mermaid", "Payment")],
+      defaultConfig(),
+    );
+    expect(facts.some((f) => f.label === "section" && f.source === ".context/spec.md:3")).toBe(
+      true,
+    );
   });
 
   it("lists at most MAX_LISTED source files and counts the rest", async () => {
@@ -302,13 +372,13 @@ describe("collectFacts", () => {
     expect(facts.find((f) => f.label === "decision")?.provenance).toBe("unverified");
   });
 
-  it("falls back to 0 commits when git cannot count them", async () => {
+  it("an unknown verified_at sha is stale (ADR 0013)", async () => {
     const index = await buildIndex(await makeFixture());
     const target = pick(index, "section", "Authentication");
     if (target.kind !== "section") throw new Error("unreachable");
     target.section.meta.verifiedAt = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; // no such commit
     const { facts } = await collectFacts(index, [target], defaultConfig());
-    expect(facts.find((f) => f.label === "section")?.provenance).toBe("fresh");
+    expect(facts.find((f) => f.label === "section")?.provenance).toBe("stale");
   });
 
   it("caps text and count", async () => {

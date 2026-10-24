@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { makeTempDir as makeSharedTempDir } from "./repo.js";
 
 const run = promisify(execFile);
 
@@ -21,11 +22,11 @@ export async function writeFiles(root: string, files: Record<string, string>): P
  * repo (some machines have a repo at the home folder, which would make a "no
  * git" test see that repo). Git never searches upward past GIT_CEILING_DIRECTORIES,
  * so it is pinned to the OS temp folder for every git call made in this process.
- * Tests do not clean up; the OS temp folder does.
+ * Shares the registry in repo.ts, so the dir is removed after the test file runs.
  */
 export function makeTempDir(prefix = "baton-explain-"): Promise<string> {
   process.env.GIT_CEILING_DIRECTORIES = tmpdir();
-  return mkdtemp(join(tmpdir(), prefix));
+  return Promise.resolve(makeSharedTempDir(prefix));
 }
 
 const ARCH_DOC = [

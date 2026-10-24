@@ -1,6 +1,4 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -27,6 +25,11 @@ export async function headSha(cwd: string): Promise<string | null> {
   }
 }
 
+/** A stamp is a hex sha prefix. Anything else (a `-` option, a ref name) is rejected like an unknown sha. */
+function assertSha(sha: string): void {
+  if (!/^[0-9a-f]{4,40}$/i.test(sha)) throw new Error(`not a commit sha: ${sha}`);
+}
+
 /**
  * Number of commits in sinceSha..HEAD that touch any of the given pathspecs.
  * Globs are passed as `:(glob)` pathspecs so `src/auth/**` behaves the same on
@@ -38,8 +41,12 @@ export async function commitsTouching(
   paths: string[],
 ): Promise<number> {
   if (paths.length === 0) return 0;
+  assertSha(sinceSha);
   const specs = paths.map((p) => `:(glob)${p}`);
-  const out = await git(["rev-list", "--count", `${sinceSha}..HEAD`, "--", ...specs], cwd);
+  const out = await git(
+    ["rev-list", "--count", "--end-of-options", `${sinceSha}..HEAD`, "--", ...specs],
+    cwd,
+  );
   return Number.parseInt(out, 10) || 0;
 }
 
@@ -61,12 +68,14 @@ export async function diffStat(cwd: string, exclude: string[] = []): Promise<str
  */
 export async function listRepoFiles(cwd: string): Promise<string[]> {
   if (!(await isGitRepo(cwd))) return [];
-  const out = await git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd);
-  const files = new Set(out.split("\0").filter((p) => p !== ""));
+  const [listed, deleted] = await Promise.all([
+    git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd),
+    git(["ls-files", "--deleted", "-z"], cwd),
+  ]);
   // --cached still lists files that were deleted from the work tree.
-  return [...files]
-    .filter((p) => existsSync(join(cwd, p)))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const gone = new Set(deleted.split("\0"));
+  const files = new Set(listed.split("\0").filter((p) => p !== "" && !gone.has(p)));
+  return [...files].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 /**
@@ -75,6 +84,7 @@ export async function listRepoFiles(cwd: string): Promise<string[]> {
  * Rejects when sinceSha is unknown.
  */
 export async function changedFilesPerCommit(cwd: string, sinceSha: string): Promise<string[][]> {
+  assertSha(sinceSha);
   const out = await git(
     [
       "-c",
@@ -84,6 +94,7 @@ export async function changedFilesPerCommit(cwd: string, sinceSha: string): Prom
       "--no-renames",
       "--name-only",
       "--format=%x00%H",
+      "--end-of-options",
       `${sinceSha}..HEAD`,
     ],
     cwd,
@@ -108,7 +119,7 @@ export async function ignoredPaths(cwd: string, paths: string[]): Promise<Set<st
   return new Promise((resolve, reject) => {
     const child = execFile(
       "git",
-      ["check-ignore", "--no-index", "--stdin"],
+      ["-c", "core.quotePath=false", "check-ignore", "--no-index", "--stdin"],
       { cwd, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {
@@ -136,23 +147,72 @@ export async function currentBranch(cwd: string): Promise<string | null> {
   }
 }
 
-/** Porcelain status lines without taking the optional index lock (safe in hooks). */
-export async function statusLines(cwd: string): Promise<string[]> {
-  const out = await git(["--no-optional-locks", "status", "--porcelain=v1"], cwd);
+/**
+ * Porcelain status lines without taking the optional index lock (safe in hooks).
+ * `untrackedAll` lists files inside untracked directories individually instead of
+ * collapsing each directory to one `dir/` entry.
+ */
+export async function statusLines(
+  cwd: string,
+  options: { untrackedAll?: boolean } = {},
+): Promise<string[]> {
+  const out = await git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "--no-optional-locks",
+      "status",
+      "--porcelain=v1",
+      ...(options.untrackedAll ? ["--untracked-files=all"] : []),
+    ],
+    cwd,
+  );
   return out ? out.split("\n") : [];
 }
 
-/** The path of a `status --porcelain=v1` line: after " -> " for renames, quotes stripped. */
+/** The path of a `status --porcelain=v1` line: after " -> " for renames and copies, quotes stripped. */
 export function porcelainPath(line: string): string {
   let path = line.slice(3);
-  const arrow = path.indexOf(" -> ");
-  if (arrow !== -1) path = path.slice(arrow + 4);
+  if (line[0] === "R" || line[0] === "C") {
+    const arrow = path.indexOf(" -> ");
+    if (arrow !== -1) path = path.slice(arrow + 4);
+  }
   if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
   return path;
 }
 
-/** Porcelain status lines, for handoffs. */
-export async function statusPorcelain(cwd: string): Promise<string[]> {
-  const out = await git(["status", "--porcelain=v1"], cwd);
-  return out ? out.split("\n") : [];
+/**
+ * Files changed by each non-merge commit made strictly after the second of
+ * `sinceIso`, newest commit first. git stores whole-second committer times, so a
+ * commit made in the same second as the start (a fixture's first commit, the
+ * previous task's commit) is not part of the result. No HEAD (no commit yet, or
+ * not a repo) gives []. An unparseable date rejects; so does a git failure inside
+ * a repo.
+ */
+export async function changedFilesSince(cwd: string, sinceIso: string): Promise<string[][]> {
+  if ((await headSha(cwd)) === null) return [];
+  const since = Math.floor(Date.parse(sinceIso) / 1000);
+  if (Number.isNaN(since)) throw new Error(`bad since: ${sinceIso}`);
+  const out = await git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "log",
+      "--no-merges",
+      "--no-renames",
+      "--name-only",
+      "--format=%x00%H %ct",
+      `--since=${since}`,
+      "--end-of-options",
+      "HEAD",
+    ],
+    cwd,
+  );
+  const result: string[][] = [];
+  for (const chunk of out.split("\0").slice(1)) {
+    const [head = "", ...files] = chunk.split("\n");
+    if (!(Number(head.split(" ")[1]) > since)) continue;
+    result.push(files.filter((line) => line !== ""));
+  }
+  return result;
 }

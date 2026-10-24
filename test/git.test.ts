@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
@@ -27,7 +26,7 @@ const commit = (file: string, msg: string) => {
 };
 
 beforeAll(() => {
-  repo = mkdtempSync(join(tmpdir(), "baton-git-"));
+  repo = makeTempDir("baton-git-");
   sh("init", "-q");
   commit("README.md", "init");
 });
@@ -102,6 +101,21 @@ describe("git helpers for freshness", () => {
     expect((await ignoredPaths(root, many)).size).toBe(2000);
   });
 
+  it("returns non-ASCII ignored paths unquoted", async () => {
+    const root = makeRepo({ ".gitignore": "build/\n", "src/b.ts": "b\n" });
+    expect(await ignoredPaths(root, ["build/café.js", "src/b.ts"])).toEqual(
+      new Set(["build/café.js"]),
+    );
+  });
+
+  it("rejects a sha that looks like an option and creates no file", async () => {
+    const root = makeRepo({ "a.txt": "a\n" });
+    await expect(changedFilesPerCommit(root, "--output=pwned")).rejects.toThrow();
+    await expect(commitsTouching(root, "--output=pwned", ["a.txt"])).rejects.toThrow();
+    expect(existsSync(join(root, "pwned..HEAD"))).toBe(false);
+    expect(existsSync(join(root, "pwned"))).toBe(false);
+  });
+
   it("reads the branch", async () => {
     const root = makeRepo({ "a.txt": "a\n" });
     expect(await currentBranch(root)).toBe("main");
@@ -120,6 +134,14 @@ describe("git helpers for freshness", () => {
     expect(porcelainPath(" M src/a.ts")).toBe("src/a.ts");
     expect(porcelainPath("R  old.ts -> src/b.ts")).toBe("src/b.ts");
     expect(porcelainPath('?? "a b.md"')).toBe("a b.md");
+    expect(porcelainPath('?? "a -> b.md"')).toBe("a -> b.md");
+  });
+
+  it("resolves non-ASCII untracked names through porcelainPath", async () => {
+    const root = makeRepo({ "a.txt": "a\n" });
+    writeFiles(root, { "résumé.md": "cv\n" });
+    const lines = await statusLines(root);
+    expect(lines.map(porcelainPath)).toEqual(["résumé.md"]);
   });
 
   it("excludes paths from diff --stat", async () => {

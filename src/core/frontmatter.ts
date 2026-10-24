@@ -1,4 +1,5 @@
 import { parse } from "yaml";
+import { fencedLines } from "./fences.js";
 import { SECTION_KINDS, type Section, type SectionKind, type SectionMeta } from "./types.js";
 
 /**
@@ -65,7 +66,9 @@ export function parseFileSection(text: string, file: string): Section | null {
   const { data, body } = parseFrontmatter(text);
   if (data.id === undefined) return null;
   const meta = toSectionMeta(data, file);
-  const heading = body.split(/\r?\n/).find((l) => HEADING_RE.test(l));
+  const bodyLines = body.split(/\r?\n/);
+  const fenced = fencedLines(bodyLines);
+  const heading = bodyLines.find((l, i) => !fenced[i] && HEADING_RE.test(l));
   const title = heading ? (HEADING_RE.exec(heading)?.[2] ?? meta.id) : meta.id;
   return { meta, title, body: body.trim(), file, line: 1 };
 }
@@ -80,6 +83,7 @@ export function parseFileSection(text: string, file: string): Section | null {
  */
 export function parseSections(text: string, file: string): Section[] {
   const lines = text.split(/\r?\n/);
+  const fenced = fencedLines(lines);
   const sections: Section[] = [];
   const open: { section: Section; level: number; collected: string[] }[] = [];
 
@@ -94,7 +98,8 @@ export function parseSections(text: string, file: string): Section[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    const h = HEADING_RE.exec(line);
+    // Inside a fenced code block a `#` line is code, not a heading.
+    const h = fenced[i] ? null : HEADING_RE.exec(line);
     if (h) {
       const level = (h[1] ?? "#").length;
       closeFrom(level);

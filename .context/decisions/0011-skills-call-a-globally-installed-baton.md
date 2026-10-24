@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-20
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "428730e2882f"
 source_paths: [plugin/skills/**]
 spec_sections: [skills]
 ---

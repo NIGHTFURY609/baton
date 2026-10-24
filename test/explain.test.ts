@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BatonError } from "../src/core/errors.js";
@@ -324,5 +325,14 @@ describe("explain", () => {
     const root = await makeFixture();
     await writeFiles(root, { ".context/config.yaml": "version: 1\n" });
     expect(ok(await explain(root, "supabase", { dirs: await emptyDirs() })).skipped).toEqual([]);
+  });
+
+  it("a git failure while labelling provenance is reported, not thrown", async () => {
+    const root = await makeFixture();
+    await writeFile(`${root}/.git/index`, "garbage"); // corrupt index: every ls-files fails
+    const result = ok(await explain(root, "Authentication", { dirs: await emptyDirs() }));
+    const fact = result.facts.find((f) => f.label === "section");
+    expect(fact?.provenance).toBe("unverified");
+    expect(result.skipped.some((s) => s.error.includes("freshness unavailable"))).toBe(true);
   });
 });

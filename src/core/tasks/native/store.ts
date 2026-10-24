@@ -69,8 +69,12 @@ export function issueToTask(i: Issue): Task {
     status: i.status,
     priority: i.priority,
     specSections: i.labels.filter((l) => l.startsWith("spec:")).map((l) => l.slice(5)),
+    issueType: i.issueType,
   };
   if (i.description) task.description = i.description;
+  if (i.assignee) task.assignee = i.assignee;
+  if (i.closedAt) task.closedAt = i.closedAt;
+  if (i.closeReason) task.closeReason = i.closeReason;
   const check = i.labels.find((l) => l.startsWith("check:"));
   if (check) task.checkCommand = check.slice(6);
   return task;

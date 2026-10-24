@@ -68,6 +68,11 @@ export interface Task {
   specSections: string[];
   /** Shell command `baton verify` runs to decide whether the task is done. */
   checkCommand?: string;
+  /** Native store only: task, bug, feature, epic, ... */
+  issueType?: string;
+  assignee?: string;
+  closedAt?: string;
+  closeReason?: string;
 }
 
 export type Harness = "claude" | "codex" | "gemini";
