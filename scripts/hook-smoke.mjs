@@ -8,6 +8,7 @@
 //   node scripts/hook-smoke.mjs --inspect-transcript <file.jsonl>
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -120,6 +121,13 @@ function main() {
     }
     mkdirSync(join(project, "src"));
     writeFileSync(join(project, "src", "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(project, "package.json"), '{ "name": "smoke" }\n');
+    mkdirSync(join(project, "lib"));
+    writeFileSync(join(project, "lib", "b.ts"), "export const b = 1;\n");
+    appendFileSync(
+      join(project, ".context", "spec.md"),
+      '\n## Lib\n<!-- baton: {id: smoke-lib, kind: intent, verified_at: "0123456789ab", source_paths: ["lib/**"]} -->\n\nThe lib folder.\n',
+    );
     git(project, "add", "-A");
     git(
       project,
@@ -143,6 +151,7 @@ function main() {
       SessionStart: { source: "startup" },
       PreCompact: { trigger: "manual" },
       SessionEnd: { reason: "other" },
+      Stop: { stop_hook_active: false, last_assistant_message: "done" },
       PreToolUse: { tool_name: "Edit", tool_input: { file_path: join(project, "src", "a.ts") } },
       PostToolUse: { tool_name: "Edit", tool_input: { file_path: join(project, "src", "a.ts") } },
     };
@@ -230,6 +239,119 @@ function main() {
       }
     }
 
+    // Phase 2 cases: guard denies, preflight, notice, and a plain Bash command.
+    const argvOf = (event, root) => {
+      const h = hooks.find((x) => x.event === event);
+      return expand(h.hook, root);
+    };
+    const jsonOf = (out) => {
+      try {
+        return JSON.parse(out)?.hookSpecificOutput ?? {};
+      } catch {
+        return {};
+      }
+    };
+    const isDeny = (out) => jsonOf(out).permissionDecision === "deny";
+    const cases = [
+      {
+        name: "deny Edit",
+        event: "PreToolUse",
+        tool: "Edit",
+        input: { file_path: join(project, ".context", "STATE.md") },
+        ok: isDeny,
+      },
+      {
+        name: "deny Bash",
+        event: "PreToolUse",
+        tool: "Bash",
+        input: { command: "echo x > .context/tasks.jsonl" },
+        ok: isDeny,
+      },
+      {
+        name: "deny PowerShell",
+        event: "PreToolUse",
+        tool: "PowerShell",
+        input: { command: "Set-Content -Path .context\\STATE.md -Value x" },
+        ok: isDeny,
+      },
+      {
+        name: "preflight",
+        event: "PreToolUse",
+        tool: "Edit",
+        input: { file_path: join(project, "package.json") },
+        ok: (out) => {
+          const o = jsonOf(out);
+          return (
+            typeof o.additionalContext === "string" &&
+            o.additionalContext.startsWith("baton preflight:") &&
+            o.permissionDecision === undefined
+          );
+        },
+      },
+      {
+        name: "notice",
+        event: "PostToolUse",
+        tool: "Edit",
+        input: { file_path: join(project, "lib", "b.ts") },
+        ok: (out) => String(jsonOf(out).additionalContext ?? "").includes("smoke-lib"),
+      },
+      {
+        name: "pre ordinary edit",
+        event: "PreToolUse",
+        tool: "Edit",
+        input: { file_path: join(project, "src", "x.ts") },
+        ok: (out) => out === "",
+      },
+      {
+        name: "pre ordinary bash",
+        event: "PreToolUse",
+        tool: "Bash",
+        input: { command: "git status" },
+        ok: (out) => out === "",
+      },
+    ];
+    for (const [rootIdx, root] of roots.entries()) {
+      for (const c of cases) {
+        const argv = argvOf(c.event, root);
+        const times = [];
+        let last;
+        for (let i = 0; i < runs; i++) {
+          const input = JSON.stringify({
+            hook_event_name: c.event,
+            session_id: `smoke-${rootIdx}-${i}`,
+            cwd: project,
+            tool_name: c.tool,
+            tool_input: c.input,
+          });
+          const t0 = performance.now();
+          last = spawnSync(argv[0], argv.slice(1), {
+            cwd: project,
+            input,
+            encoding: "utf8",
+            shell: false,
+            env: {
+              ...process.env,
+              CLAUDE_PROJECT_DIR: project,
+              CLAUDE_PLUGIN_ROOT: root,
+              CLAUDE_CONFIG_DIR: claudeConfig,
+            },
+          });
+          times.push(performance.now() - t0);
+          if (last.status !== 0 || last.stderr !== "") {
+            fail(
+              `${c.name} [${root}] run ${i + 1}: status ${last.status} stderr ${JSON.stringify(last.stderr)}`,
+            );
+          }
+          if (!c.ok(last.stdout ?? "")) {
+            fail(
+              `${c.name} [${root}] run ${i + 1}: unexpected stdout ${JSON.stringify((last.stdout ?? "").slice(0, 200))}`,
+            );
+          }
+        }
+        rows.push({ check: c.name, root, ms: median(times), budget: 150 });
+      }
+    }
+
     // Real budgets on this repo (read-only apart from the git-ignored packet cache).
     for (const [name, cliArgs] of [
       ["mission", ["mission"]],
@@ -252,6 +374,39 @@ function main() {
         }
       }
       rows.push({ check: name, root: "-", ms: median(times), budget: 1000 });
+    }
+
+    // Same hooks against this repo's real .context/ (full section index, real config).
+    for (const [name, event, ok] of [
+      ["post-tool-use on repo", "PostToolUse", () => true],
+      ["pre-tool-use on repo", "PreToolUse", (out) => out === ""],
+    ]) {
+      const argv = argvOf(event, roots[0]);
+      const times = [];
+      for (let i = 0; i < runs; i++) {
+        const input = JSON.stringify({
+          hook_event_name: event,
+          session_id: `smoke-${i}`,
+          cwd: repo,
+          tool_name: "Edit",
+          tool_input: { file_path: join(repo, "src", "core", "drift.ts") },
+        });
+        const t0 = performance.now();
+        const r = spawnSync(argv[0], argv.slice(1), {
+          cwd: repo,
+          input,
+          encoding: "utf8",
+          shell: false,
+          env: { ...process.env, CLAUDE_CONFIG_DIR: claudeConfig },
+        });
+        times.push(performance.now() - t0);
+        if (r.status !== 0 || r.stderr !== "" || !ok(r.stdout ?? "")) {
+          fail(
+            `${name} run ${i + 1}: status ${r.status}, stdout ${JSON.stringify((r.stdout ?? "").slice(0, 120))}, stderr ${JSON.stringify(r.stderr.slice(0, 200))}`,
+          );
+        }
+      }
+      rows.push({ check: name, root: "-", ms: median(times), budget: 150 });
     }
 
     console.log("");
