@@ -21,7 +21,7 @@ Goal: a short spec.md whose every section can be checked for freshness. Intent a
 
    - `id`: short kebab-case, unique across `.context/`.
    - `source_paths`: the globs whose changes could make the section wrong. Empty only for sections no code can contradict (purpose, non-goals).
-5. For every load-bearing choice the user states (storage, framework, auth model, hosting), run `baton decide "<title>" --status accepted --spec <section-ids>`. Until Phase 2, `baton decide` exits 3 (not built yet). In that case, record each choice as a task instead, `baton task create "Decide: <title>" -t decision --spec <section-ids>`, so nothing is lost and no decision file is written by hand.
+5. For every load-bearing choice the user states (storage, framework, auth model, hosting), run `baton decide "<title>" --status accepted --spec <section-ids> --context "<why, in the user's words>" --outcome "<the choice>"`. If the user has not confirmed it yet, leave out `--status accepted`, `--context` and `--outcome`: the record stays proposed (see the decide skill).
 6. Show the user the spec, then run `baton verify-doc <ids...>` for the sections they confirm. verify-doc stamps the current commit. If it reports `no commits yet`, ask the user to make a first commit.
 7. Run `baton drift` and report the result.
 
@@ -29,4 +29,4 @@ Goal: a short spec.md whose every section can be checked for freshness. Intent a
 
 - Keep each section under ~15 lines. The mission packet budget is 9,000 characters for everything.
 - Do not invent requirements; mark unknowns as open questions in the section text.
-- Never edit `.context/decisions/` or `.context/STATE.md` directly.
+- Never edit `.context/STATE.md`, decision frontmatter or accepted records; fill a proposed record's body (decide skill).

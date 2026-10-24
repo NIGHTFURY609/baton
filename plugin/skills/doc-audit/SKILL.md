@@ -9,7 +9,7 @@ license: MIT
 
 1. Run `baton drift --format json`.
 2. For each stale or aging section, read the section and the commits that touched its `source_paths` since `verified_at` (`git log --oneline <sha>..HEAD -- <paths>`). Decide: still true, partly wrong, or wrong.
-3. Propose fixes as a list, one per section: re-verify unchanged (`baton verify-doc <id>`), edit the text (show the diff), or supersede via `baton decide`. Dead references: point at the new path or remove the claim.
+3. Propose fixes as a list, one per section: re-verify unchanged (`baton verify-doc <id>`), edit the text (show the diff), or supersede it with `baton decide "<title>" --supersedes <NNNN>` (decide skill). Dead references: point at the new path or remove the claim.
 4. Apply only what the user approves, then run `baton drift` again and report the before/after counts.
 
 ## Rules
