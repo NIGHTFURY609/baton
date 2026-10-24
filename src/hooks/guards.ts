@@ -42,7 +42,7 @@ export function editTargets(toolName: string, toolInput: Record<string, unknown>
   // Codex apply_patch: paths appear in "*** Update File: <path>" style headers.
   if (toolName === "apply_patch") {
     const patch = typeof toolInput.input === "string" ? toolInput.input : "";
-    return [...patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) =>
+    return [...patch.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) =>
       (m[1] ?? "").trim(),
     );
   }
@@ -66,6 +66,22 @@ export const SHELL_TOOLS: readonly string[] = ["Bash", "PowerShell", "run_shell_
 
 const isAbs = (p: string): boolean => /^[A-Za-z]:\//.test(p) || p.startsWith("/");
 
+/**
+ * Windows treats `STATE.md.`, `STATE.md::$DATA` and `STATE.md:stream` as the same file:
+ * drop a stream suffix on the last segment and trailing dots and spaces on every segment.
+ */
+function winAlias(p: string): string {
+  const parts = p.split("/");
+  const last = parts.length - 1;
+  return parts
+    .map((seg, i) => {
+      if (i === 0 && /^[A-Za-z]:$/.test(seg)) return seg;
+      return (i === last ? seg.replace(/:.*$/, "") : seg).replace(/[. ]+$/, "");
+    })
+    .filter((seg, i) => i === 0 || seg !== "")
+    .join("/");
+}
+
 /** Repo-relative POSIX path of `p` (as a tool gave it), or null when it lies outside `root`. */
 export function toRepoTarget(
   p: string,
@@ -73,10 +89,12 @@ export function toRepoTarget(
   cwd: string,
   platform: NodeJS.Platform = process.platform,
 ): string | null {
-  const a = p.trim().replace(/\\/g, "/");
+  let a = p.trim().replace(/\\/g, "/");
+  if (platform === "win32") a = a.replace(/^\/{1,2}\?\//, "");
   const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
   const c = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  const abs = posix.normalize(isAbs(a) ? a : posix.join(c, a));
+  let abs = posix.normalize(isAbs(a) ? a : posix.join(c, a));
+  if (platform === "win32") abs = winAlias(abs);
   const fold = (x: string): string => (platform === "win32" ? x.toLowerCase() : x);
   if (!fold(abs).startsWith(`${fold(r)}/`)) return null;
   return abs.slice(r.length + 1);
@@ -88,7 +106,7 @@ export function protectedClass(
   platform: NodeJS.Platform = process.platform,
 ): ProtectedClass | null {
   const win = platform === "win32";
-  const q = win ? repoPath.toLowerCase() : repoPath;
+  const q = win ? winAlias(repoPath).toLowerCase() : repoPath;
   const k = (s: string): string => (win ? s.toLowerCase() : s);
   if (q === k(".context/STATE.md")) return "state";
   if (q === k(".context/tasks.jsonl")) return "tasks";
@@ -120,7 +138,8 @@ export function shellSegments(command: string): string[] {
 }
 
 const SEG = String.raw`[^\s"'\`;|&<>()]`;
-const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
+const SEGNS = String.raw`[^\s"'\`;|&<>()/]`;
+const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.context/${SEGNS}*[*?\[{]${SEG}*|\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
 const mentionRe = (): RegExp => new RegExp(MENTION_SRC, "gi");
 const normMention = (m: string): string => m.replace(/^(?:\.\/)+/, "");
 
@@ -175,7 +194,7 @@ const ALL_MENTIONS = new Set(
 const GIT_WRITE = new Set(["checkout", "restore", "rm", "mv"]);
 const NESTED_SHELLS = new Set(["bash", "sh", "zsh", "cmd", "pwsh", "powershell"]);
 const WRITE_API_RE =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content|rmSync|rmdirSync|rmdir|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\b|\brm\(|File\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
 
 function gitSubcommand(rest: string[]): string | null {
   for (let i = 0; i < rest.length; i++) {
@@ -214,7 +233,7 @@ function segmentWrites(seg: string, out: string[]): void {
       const hit = dest === null ? null : tokenMention(dest);
       if (hit) out.push(hit);
     } else if (name === "sed") {
-      if (rest.some((w) => w === "-i" || w.startsWith("-i") || w === "--in-place")) {
+      if (rest.some((w) => /^-[A-Za-z]*i/.test(w) || /^--in-place(?:=|$)/.test(w))) {
         out.push(...mentions);
       }
     } else if (name === "perl") {
@@ -317,7 +336,7 @@ export function applyEdits(
   input: Record<string, unknown>,
   current: string,
 ): string | null {
-  const cur = lf(current.replace(/^﻿/, ""));
+  const cur = lf(current.replace(/^\uFEFF/, ""));
   if (tool === "Write" || tool === "write_file") {
     return typeof input.content === "string" ? input.content : null;
   }

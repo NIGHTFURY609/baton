@@ -84,6 +84,16 @@ describe("shellWriteTargets", () => {
     ['cmd /C "del .context\\tasks.jsonl"', "tasks"],
     ['powershell -COMMAND "Out-File -FilePath .context\\STATE.md"', "state"],
     ["C:\\tools\\rm.cmd .context\\STATE.md", "state"],
+    ["rm -rf .context/*", "context-dir"],
+    ["Remove-Item .context\\*", "context-dir"],
+    ["rm .context/*.jsonl", "context-dir"],
+    ["rm .context/STATE.*", "context-dir"],
+    ["sed -ri 's/a/b/' .context/STATE.md", "state"],
+    ["sed -Ei 's/a/b/' .context/STATE.md", "state"],
+    ["sed --in-place=.bak 's/a/b/' .context/STATE.md", "state"],
+    [`node -e "require('fs').rmSync('.context/STATE.md')"`, "state"],
+    [`node -e "require('fs').unlinkSync('.context/tasks.jsonl')"`, "tasks"],
+    [`python -c "import os; os.remove('.context/STATE.md')"`, "state"],
   ];
   it.each(deny)("denies %s", (cmd, rule) => {
     const hits = shellWriteTargets(cmd);
@@ -107,6 +117,8 @@ describe("shellWriteTargets", () => {
     "cat .context/STATE.md.bak > x",
     "node dist/baton.mjs decide --accept 22",
     "git -C sub log -- .context/STATE.md",
+    "sed -n p .context/STATE.md",
+    "ls .context/knowledge/*.md",
   ];
   it.each(allow)("allows %s", (cmd) => {
     expect(shellWriteTargets(cmd)).toEqual([]);
@@ -297,6 +309,10 @@ describe("checkToolCall", () => {
       "adr-status",
     );
     expect(rule("apply_patch", { input: patch("-Draft.\n+Better.") })).toBeNull();
+    const mv =
+      "*** Begin Patch\n*** Update File: a.txt\n*** Move to: .context/STATE.md\n@@\n*** End Patch";
+    expect(rule("apply_patch", { input: mv })).toBe("state");
+    expect(editTargets("apply_patch", { input: mv })).toEqual(["a.txt", ".context/STATE.md"]);
   });
 
   it("covers shell tools and leaves other targets alone", () => {
@@ -310,5 +326,25 @@ describe("checkToolCall", () => {
     expect(rule("Edit", { file_path: "N:\\other\\.context\\STATE.md" })).toBeNull();
     expect(rule("Read", { file_path: "N:\\repo\\.context\\STATE.md" })).toBeNull();
     expect(rule("Edit", { file_path: ".context/spec.md" })).toBeNull();
+  });
+});
+
+describe("windows path aliases", () => {
+  it("classify as the protected file on win32", () => {
+    for (const p of [
+      "N:\\repo\\.context\\STATE.md.",
+      "N:\\repo\\.context\\STATE.md::$DATA",
+      "N:\\repo\\.context\\STATE.md. ",
+      "\\\\?\\N:\\repo\\.context\\STATE.md",
+      "\\?\\N:\\repo\\.context\\STATE.md",
+      "N:\\repo\\.context\\STATE.md:stream",
+    ]) {
+      expect(toRepoTarget(p, "N:\\repo", "N:\\repo", "win32"), p).toBe(".context/STATE.md");
+    }
+    expect(toRepoTarget("N:\\repo\\.context\\tasks.jsonl.", "N:\\repo", "N:\\repo", "win32")).toBe(
+      ".context/tasks.jsonl",
+    );
+    expect(protectedClass(".context/STATE.md.", "win32")).toBe("state");
+    expect(protectedClass(".context/tasks.jsonl. ", "win32")).toBe("tasks");
   });
 });
