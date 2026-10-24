@@ -94,7 +94,7 @@ export function registerDrift(program: Command): void {
           const paths = uncommittedSources(status, before.byId.get(id)?.meta.sourcePaths ?? []);
           if (paths.length > 0) {
             process.stderr.write(
-              `note: ${id}: uncommitted changes in ${paths.join(", ")} will count once committed\n`,
+              `note: ${id}: uncommitted changes in ${paths.join(", ")} keep it aging until committed and re-verified\n`,
             );
           }
         }

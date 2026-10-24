@@ -2,8 +2,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, defaultConfig, loadConfig } from "../src/core/config.js";
-import { evaluateFreshness, extractPathRefs } from "../src/core/drift.js";
+import { evaluateFreshness, extractPathRefs, readDriftLog } from "../src/core/drift.js";
+import { buildMission } from "../src/core/mission.js";
 import { loadSectionIndex } from "../src/core/sections.js";
+import { runCli } from "./helpers/cli.js";
 import {
   CONTEXT_FIXTURE,
   commitAll,
@@ -268,5 +270,116 @@ describe("evaluateFreshness", () => {
     );
     const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
     expect(total).toBe(r.sections.length);
+  });
+});
+
+describe("uncommitted changes", () => {
+  const LOGIN = { "src/auth/login.ts": "export const login = 2;\n" };
+
+  it("ages fresh sections whose sources are dirty", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, LOGIN);
+    const r = await evaluate(root);
+    const auth = find(r, "auth");
+    expect(auth.result.level).toBe("aging");
+    expect(auth.result.commitsSince).toBe(0);
+    expect(auth.result.reason).toBe("uncommitted changes in src/auth/login.ts");
+    expect(auth.uncommitted).toEqual(["src/auth/login.ts"]);
+    expect(find(r, "knowledge-windows").result.level).toBe("aging");
+    const rules = find(r, "rules-project");
+    expect(rules.result.level).toBe("fresh");
+    expect("uncommitted" in rules).toBe(false);
+  });
+
+  it("lists untracked files too", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, { ...LOGIN, "src/auth/new.ts": "export {};\n" });
+    expect(find(await evaluate(root), "auth").result.reason).toBe(
+      "uncommitted changes in src/auth/login.ts, src/auth/new.ts",
+    );
+  });
+
+  it("caps the reason at three paths", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, {
+      "src/auth/f1.ts": "1\n",
+      "src/auth/f2.ts": "2\n",
+      "src/auth/f3.ts": "3\n",
+      "src/auth/f4.ts": "4\n",
+      "src/auth/f5.ts": "5\n",
+    });
+    const auth = find(await evaluate(root), "auth");
+    expect(auth.result.reason).toMatch(/\(\+2 more\)$/);
+    expect(auth.uncommitted).toHaveLength(5);
+  });
+
+  it(".context/-only changes leave sections fresh", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, { ".context/tasks.jsonl": '{"id":"bt-1"}\n' });
+    edit(root, ".context/spec.md", (t) => t.replace("monthly only", "yearly too"));
+    const r = await evaluate(root);
+    for (const s of r.sections) {
+      expect(s.result.level, s.section.meta.id).toBe(
+        s.section.meta.id === "adr-0002" ? "superseded" : "fresh",
+      );
+    }
+  });
+
+  it("already aging stays aging by commits", async () => {
+    const { root, stamp } = stampedRepo();
+    writeFiles(root, LOGIN);
+    commitAll(root, "change login");
+    writeFiles(root, { "src/auth/login.ts": "export const login = 3;\n" });
+    const auth = find(await evaluate(root), "auth");
+    expect(auth.result.reason).toBe(`1 commit touched sources since ${stamp.slice(0, 7)}`);
+    expect(auth.uncommitted).toBeUndefined();
+  });
+
+  it("unverified stays unverified", async () => {
+    const root = makeRepo();
+    writeFiles(root, LOGIN);
+    expect(find(await evaluate(root), "auth").result.level).toBe("unverified");
+  });
+
+  it("counts reflect the change", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, LOGIN);
+    expect((await evaluate(root)).counts).toEqual({
+      fresh: 4,
+      aging: 2,
+      stale: 0,
+      superseded: 1,
+      unverified: 0,
+    });
+  });
+
+  it("the packet shows it", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, LOGIN);
+    const m = await buildMission(root, await loadConfig(root), {
+      now: new Date("2026-10-21T00:00:00.000Z"),
+    });
+    expect(m.text).toContain("Aging: auth (uncommitted changes in src/auth/login.ts)");
+  });
+
+  it("no drift flags for uncommitted-only aging", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, LOGIN);
+    expect((await runCli(["drift"], root)).exitCode).toBe(0);
+    expect((await readDriftLog(root)).filter((e) => e.event === "flag")).toEqual([]);
+    commitAll(root, "change login");
+    await runCli(["drift"], root);
+    const ids = (await readDriftLog(root)).flatMap((e) => (e.event === "flag" ? [e.id] : []));
+    expect(ids).toContain("auth");
+    expect(ids).toContain("knowledge-windows");
+  });
+
+  it("verify-doc notes the uncommitted source", async () => {
+    const { root } = stampedRepo();
+    writeFiles(root, LOGIN);
+    const r = await runCli(["verify-doc", "auth"], root);
+    expect(r.stderr).toContain(
+      "note: auth: uncommitted changes in src/auth/login.ts keep it aging until committed and re-verified",
+    );
   });
 });
