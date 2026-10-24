@@ -1,11 +1,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runHook } from "../src/hooks/dispatch.js";
 import { blockReason } from "../src/hooks/stop.js";
 import { CONTEXT_FIXTURE, makeRepo, makeTempDir, runGit, withService } from "./helpers/repo.js";
 import { isolateClaudeConfig } from "./helpers/transcript.js";
+
+const verifySpy = vi.hoisted(() => vi.fn());
+vi.mock("../src/core/verify.js", async (orig) => {
+  const actual = await orig<typeof import("../src/core/verify.js")>();
+  verifySpy.mockImplementation(actual.verifyTask);
+  return { ...actual, verifyTask: verifySpy };
+});
 
 const stdin = (obj: unknown) => Readable.from([JSON.stringify(obj)]);
 
@@ -111,14 +118,30 @@ describe("stop hook", () => {
     expect(await run(dir)).toEqual(NOTHING);
   });
 
-  it("checks the most recently started task", async () => {
+  it("checks the most recently started task, not the last created", async () => {
     const root = onStopRepo();
-    await claim(root, PASS, "tester", "A");
+    const [a, b] = await withService(root, "tester", (s) => {
+      const bTask = s.create({ title: "B", labels: [`check:${FAIL}`] });
+      const aTask = s.create({ title: "A", labels: [`check:${PASS}`] });
+      return [aTask, bTask] as const;
+    });
+    await withService(root, "tester", (s) => s.claim(a.id));
     await new Promise((r) => setTimeout(r, 5));
-    const b = await claim(root, FAIL, "tester", "B");
+    await withService(root, "tester", (s) => s.claim(b.id));
     change(root);
     const body = JSON.parse((await run(root)).stdout) as { reason: string };
     expect(body.reason).toContain(`Task ${b.id} `);
+  });
+
+  it("passes the 540 s total deadline to verifyTask", async () => {
+    const root = onStopRepo();
+    await claim(root, PASS);
+    change(root);
+    verifySpy.mockClear();
+    await run(root);
+    expect(verifySpy).toHaveBeenCalledTimes(1);
+    const opts = verifySpy.mock.calls[0]?.[3] as { totalTimeoutMs?: number };
+    expect(opts.totalTimeoutMs).toBe(540_000);
   });
 });
 

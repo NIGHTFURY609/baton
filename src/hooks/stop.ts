@@ -38,7 +38,7 @@ export async function stopHook(input: HookInput, ctx: HookContext): Promise<Hook
   const outcome = await verifyTask(ctx.root, config, task.id, {
     requireDiff: config.verify.requireDiff,
     close: false,
-    timeoutMs: STOP_CHECK_TIMEOUT_MS,
+    totalTimeoutMs: STOP_CHECK_TIMEOUT_MS,
   });
   if (outcome.status === "failed") {
     return { kind: "block-stop", reason: blockReason(task.id, outcome.run) };

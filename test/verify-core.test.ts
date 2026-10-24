@@ -260,6 +260,56 @@ describe("verifyTask", () => {
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
   });
 
+  it("shares one total deadline across check labels", { retry: 2 }, async () => {
+    const root = makeRepo();
+    const SLEEP1 = 'node -e "setTimeout(()=>{},1500)"';
+    const SLEEP5 = 'node -e "setTimeout(()=>{},8000)"';
+    const t = await claimed(root, [`check:${SLEEP1}`, `check:${SLEEP5}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const started = Date.now();
+    const out = await verifyTask(root, config, t.id, {
+      requireDiff: true,
+      close: true,
+      timeoutMs: 20_000,
+      totalTimeoutMs: 3500,
+    });
+    expect(out.status).toBe("failed");
+    if (out.status === "failed") {
+      expect(out.run.command).toBe(SLEEP5);
+      expect(out.run.timedOut).toBe(true);
+    }
+    expect(Date.now() - started).toBeLessThan(7500);
+    expect((await readTask(root, t.id))?.status).toBe("in_progress");
+  });
+
+  it("reports a check timed out without spawning it once the total is spent", async () => {
+    const root = makeRepo();
+    const marker = join(root, "spawned.txt");
+    const SLEEP = 'node -e "setTimeout(()=>{},800)"';
+    const SECOND = `node -e "var v=1;require('fs').writeFileSync('spawned.txt','x')"`;
+    const t = await claimed(root, [`check:${SLEEP}`, `check:${SECOND}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, {
+      requireDiff: true,
+      close: false,
+      totalTimeoutMs: 1,
+    });
+    expect(out.status).toBe("failed");
+    if (out.status === "failed") expect(out.run.timedOut).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("applies no total deadline when the option is absent", async () => {
+    const root = makeRepo();
+    const t = await claimed(root, [`check:${PASS}`, `check:${PASS}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, { requireDiff: true, close: false });
+    expect(out.status).toBe("passed");
+  });
+
   it("reports already-closed without running anything", async () => {
     const root = makeRepo();
     const t = await claimed(root, [`check:${FAIL3}`]);

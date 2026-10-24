@@ -151,7 +151,10 @@ export function runCheck(
 export interface VerifyOptions {
   requireDiff: boolean;
   close: boolean;
+  /** Limit for each check. */
   timeoutMs?: number;
+  /** Limit for all checks together; a check that starts with none left is reported timed out unrun. */
+  totalTimeoutMs?: number;
   onOutput?: RunCheckOptions["onOutput"];
   onCheckStart?: (command: string) => void;
 }
@@ -206,10 +209,20 @@ export async function verifyTask(
   }
 
   const runs: CheckRun[] = [];
+  const deadline = opts.totalTimeoutMs !== undefined ? Date.now() + opts.totalTimeoutMs : undefined;
   for (const command of checks) {
+    const remaining = deadline !== undefined ? deadline - Date.now() : undefined;
+    if (remaining !== undefined && remaining <= 0) {
+      const run: CheckRun = { command, exitCode: null, timedOut: true, tail: "", ms: 0 };
+      return { status: "failed", id, run, passed: runs };
+    }
     opts.onCheckStart?.(command);
+    const limit =
+      remaining !== undefined && opts.timeoutMs !== undefined
+        ? Math.min(opts.timeoutMs, remaining)
+        : (remaining ?? opts.timeoutMs);
     const run = await runCheck(command, root, {
-      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(limit !== undefined ? { timeoutMs: limit } : {}),
       ...(opts.onOutput ? { onOutput: opts.onOutput } : {}),
     });
     if (run.exitCode !== 0 || run.timedOut) return { status: "failed", id, run, passed: runs };
