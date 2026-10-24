@@ -31,7 +31,7 @@ export function checkCommands(labels: readonly string[]): string[] {
 /** Files committed since `sinceIso` plus uncommitted ones, minus task-store churn. Sorted, unique. */
 export async function changesSince(root: string, sinceIso: string): Promise<string[]> {
   const committed = (await changedFilesSince(root, sinceIso)).flat();
-  const uncommitted = (await statusLines(root)).map(porcelainPath);
+  const uncommitted = (await statusLines(root, { untrackedAll: true })).map(porcelainPath);
   const paths = new Set(
     [...committed, ...uncommitted].filter((p) => !matchesAny(p, VERIFY_IGNORED_GLOBS)),
   );

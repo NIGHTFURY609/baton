@@ -110,6 +110,22 @@ describe("changesSince", () => {
     });
     expect(await changesSince(root, "2026-03-01T00:00:00.000Z")).toEqual(["new.txt", "old.txt"]);
   });
+
+  it("lists an untracked .context/ file by file, so a claim alone is never a diff", async () => {
+    const root = makeTempDir();
+    runGit(root, "-c", "init.defaultBranch=main", "init", "-q");
+    writeFiles(root, { "a.txt": "a\n" });
+    commitAll(root, "one");
+    writeFiles(root, {
+      ".context/tasks.jsonl": "{}\n",
+      ".context/.cache/x": "x\n",
+      ".context/STATE.md": "s\n",
+    });
+    const future = "2999-01-01T00:00:00.000Z";
+    expect(await changesSince(root, future)).toEqual([]);
+    writeFiles(root, { "work.txt": "w\n" });
+    expect(await changesSince(root, future)).toEqual(["work.txt"]);
+  });
 });
 
 describe("checkCommands", () => {
@@ -153,8 +169,10 @@ describe("runCheck", () => {
     expect(run.exitCode).toBe(0);
   });
 
-  // taskkill.exe start-up varies a lot when the whole suite runs in parallel (observed 0.3 to 1.7 s),
-  // so a slow attempt is retried. The wrong kill order is not transient: it always takes about 2.3 s.
+  // taskkill.exe start-up varies when the whole suite runs in parallel: measured 320 to 550 ms, and
+  // a 1.7 to 2.0 s spike inferred from the one flake. A second flake source is node start-up under
+  // load exceeding the 300 ms timeout, so pid.txt is missing. Retry absorbs both. The wrong kill
+  // order is not transient: it always takes about 2.3 s.
   it("kills the whole process tree on timeout", { retry: 2 }, async () => {
     const dir = makeTempDir();
     const started = Date.now();

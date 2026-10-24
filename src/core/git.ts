@@ -147,10 +147,24 @@ export async function currentBranch(cwd: string): Promise<string | null> {
   }
 }
 
-/** Porcelain status lines without taking the optional index lock (safe in hooks). */
-export async function statusLines(cwd: string): Promise<string[]> {
+/**
+ * Porcelain status lines without taking the optional index lock (safe in hooks).
+ * `untrackedAll` lists files inside untracked directories individually instead of
+ * collapsing each directory to one `dir/` entry.
+ */
+export async function statusLines(
+  cwd: string,
+  options: { untrackedAll?: boolean } = {},
+): Promise<string[]> {
   const out = await git(
-    ["-c", "core.quotePath=false", "--no-optional-locks", "status", "--porcelain=v1"],
+    [
+      "-c",
+      "core.quotePath=false",
+      "--no-optional-locks",
+      "status",
+      "--porcelain=v1",
+      ...(options.untrackedAll ? ["--untracked-files=all"] : []),
+    ],
     cwd,
   );
   return out ? out.split("\n") : [];
