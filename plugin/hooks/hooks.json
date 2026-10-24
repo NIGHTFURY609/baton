@@ -1,5 +1,5 @@
 {
-  "description": "baton continuity hooks: SessionStart injects the mission packet; PreCompact and SessionEnd regenerate .context/STATE.md; PreToolUse and PostToolUse are no-ops until Phase 2 (docs/design/architecture.md).",
+  "description": "baton continuity hooks: SessionStart injects the mission packet; PreCompact and SessionEnd regenerate .context/STATE.md; PreToolUse denies direct edits to protected state and adds preflight context; PostToolUse notices touched sections; Stop runs the active task's check when verify.onStop is set (docs/design/architecture.md).",
   "hooks": {
     "SessionStart": [
       {
@@ -60,6 +60,18 @@
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/dist/baton.mjs", "hook", "post-tool-use"],
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/baton.mjs", "hook", "stop"],
+            "timeout": 600
           }
         ]
       }

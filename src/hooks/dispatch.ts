@@ -71,7 +71,7 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  *                     preflight context on dependency/migration files          [Phase 2]
  * - post-tool-use  -> notice the sections whose source_paths an edit touched, once per
  *                     session (post-tool-use.ts)                              [Phase 2]
- * - stop           -> opt-in: verify the active task before stopping           [Phase 2, no-op now]
+ * - stop           -> opt-in: verify the active task before stopping           [Phase 2]
  */
 export const HANDLERS: Record<HookEvent, Handler> = {
   "session-start": sessionStart,
@@ -86,7 +86,7 @@ export const HANDLERS: Record<HookEvent, Handler> = {
   "pre-tool-use": async (input, ctx) => (await import("./pre-tool-use.js")).preToolUse(input, ctx),
   "post-tool-use": async (input, ctx) =>
     (await import("./post-tool-use.js")).postToolUse(input, ctx),
-  stop: noop,
+  stop: async (input, ctx) => (await import("./stop.js")).stopHook(input, ctx),
 };
 
 /**

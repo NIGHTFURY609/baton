@@ -19,6 +19,7 @@ tasks:
 
 verify:
   requireDiff: true
+  onStop: false    # Stop hook runs the active task's check and blocks on failure (ADR 0019)
 
 guards:
   protectState: true

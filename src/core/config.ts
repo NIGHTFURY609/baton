@@ -60,6 +60,8 @@ export const ConfigSchema = z.object({
     .object({
       /** Require a non-empty diff before a task can be marked done (open question). */
       requireDiff: z.boolean().default(true),
+      /** Stop hook runs the active task's check and blocks on failure (ADR 0019). */
+      onStop: z.boolean().default(false),
     })
     .prefault({}),
   guards: z

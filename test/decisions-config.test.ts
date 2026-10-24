@@ -29,6 +29,7 @@ describe("config", () => {
     expect(c.packet.maxChars).toBe(9000);
     expect(c.tasks.backend).toBe("native");
     expect(c.freshness.staleAfter.decision).toBeNull();
+    expect(c.verify.onStop).toBe(false);
   });
 
   it("rejects a packet budget above the harness cap", () => {
