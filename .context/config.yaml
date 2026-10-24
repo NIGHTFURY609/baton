@@ -25,3 +25,10 @@ guards:
   preflightPaths:
     - package.json
     - package-lock.json
+    - pnpm-lock.yaml
+    - yarn.lock
+    - requirements.txt
+    - pyproject.toml
+    - Cargo.toml
+    - go.mod
+    - "**/migrations/**"

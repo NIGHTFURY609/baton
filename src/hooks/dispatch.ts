@@ -67,8 +67,8 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
  * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md [Phase 1]
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
- * - pre-tool-use   -> deny direct edits to protected state (guards.ts);
- *                     decide --preflight on dependency/migration files         [Phase 2, no-op now]
+ * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0020);
+ *                     preflight context on dependency/migration files          [Phase 2]
  * - post-tool-use  -> mark sections whose source_paths were touched as aging   [Phase 2, no-op now]
  * - stop           -> opt-in: verify the active task before stopping           [Phase 2, no-op now]
  */
@@ -82,7 +82,7 @@ export const HANDLERS: Record<HookEvent, Handler> = {
         : "session-end",
     SESSION_END_TAIL_BYTES,
   ),
-  "pre-tool-use": noop,
+  "pre-tool-use": async (input, ctx) => (await import("./pre-tool-use.js")).preToolUse(input, ctx),
   "post-tool-use": noop,
   stop: noop,
 };

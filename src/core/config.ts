@@ -17,6 +17,19 @@ const staleAfter = z.object({
   knowledge: z.number().int().positive().nullable().default(10),
 });
 
+/** Every manifest `dependencyManifests` (hooks/guards.ts) can return, plus migrations. */
+export const PREFLIGHT_DEFAULTS: readonly string[] = [
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "requirements.txt",
+  "pyproject.toml",
+  "Cargo.toml",
+  "go.mod",
+  "**/migrations/**",
+];
+
 export const ConfigSchema = z.object({
   version: z.literal(1).default(1),
   packet: z
@@ -54,15 +67,7 @@ export const ConfigSchema = z.object({
       /** PreToolUse denies on direct edits to generated/append-only state (Phase 2). */
       protectState: z.boolean().default(true),
       /** Paths whose edits trigger `decide --preflight` (Phase 2). */
-      preflightPaths: z
-        .array(z.string())
-        .default([
-          "package.json",
-          "package-lock.json",
-          "pnpm-lock.yaml",
-          "yarn.lock",
-          "**/migrations/**",
-        ]),
+      preflightPaths: z.array(z.string()).default([...PREFLIGHT_DEFAULTS]),
     })
     .prefault({}),
 });
