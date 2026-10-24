@@ -85,6 +85,17 @@ describe("shellWriteTargets", () => {
     ['powershell -COMMAND "Out-File -FilePath .context\\STATE.md"', "state"],
     ["C:\\tools\\rm.cmd .context\\STATE.md", "state"],
     ["rm -rf .context/*", "context-dir"],
+    ["rm -rf .context*", "context-dir"],
+    ["rm -rf .cont*", "context-dir"],
+    ["rm .contex?/STATE.md", "state"],
+    ["sed -I '' 's/a/b/' .context/STATE.md", "state"],
+    ["sed -Ie 's/a/b/' .context/STATE.md", "state"],
+    ['[IO.Directory]::Delete(".context", $true)', "context-dir"],
+    ["[System.IO.File]::Move('a', '.context/STATE.md')", "state"],
+    [`node -e "require('fs').rm('.context', {recursive:true})"`, "context-dir"],
+    [`node -e "fs.renameSync('a', '.context/STATE.md')"`, "state"],
+    [`python -c "import shutil; shutil.rmtree('.context')"`, "context-dir"],
+    [`python -c "import os; os.rename('a', '.context/STATE.md')"`, "state"],
     ["Remove-Item .context\\*", "context-dir"],
     ["rm .context/*.jsonl", "context-dir"],
     ["rm .context/STATE.*", "context-dir"],
@@ -118,6 +129,14 @@ describe("shellWriteTargets", () => {
     "node dist/baton.mjs decide --accept 22",
     "git -C sub log -- .context/STATE.md",
     "sed -n p .context/STATE.md",
+    "grep -rn rename .context/",
+    "grep -n unlink .context/STATE.md",
+    "rg copyFile .context/",
+    "git log --grep rename -- .context/tasks.jsonl",
+    'git commit -m "refactor: rename foo" -- src/a.ts .context/tasks.jsonl',
+    "ls .context/*",
+    "cat .context/*.md",
+    "ls .c*",
     "ls .context/knowledge/*.md",
   ];
   it.each(allow)("allows %s", (cmd) => {
@@ -346,5 +365,14 @@ describe("windows path aliases", () => {
     );
     expect(protectedClass(".context/STATE.md.", "win32")).toBe("state");
     expect(protectedClass(".context/tasks.jsonl. ", "win32")).toBe("tasks");
+    expect(protectedClass(".context/decisions/0001-x.md.", "win32")).toBe("decision");
+    const root = "N:\\repo";
+    for (const p of [
+      "N:\\repo\\.context::$INDEX_ALLOCATION\\STATE.md",
+      "N:\\repo\\.context:$I30:$INDEX_ALLOCATION\\STATE.md",
+      "\\\\.\\N:\\repo\\.context\\STATE.md",
+    ]) {
+      expect(toRepoTarget(p, root, root, "win32"), p).toBe(".context/STATE.md");
+    }
   });
 });

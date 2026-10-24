@@ -72,11 +72,10 @@ const isAbs = (p: string): boolean => /^[A-Za-z]:\//.test(p) || p.startsWith("/"
  */
 function winAlias(p: string): string {
   const parts = p.split("/");
-  const last = parts.length - 1;
   return parts
     .map((seg, i) => {
       if (i === 0 && /^[A-Za-z]:$/.test(seg)) return seg;
-      return (i === last ? seg.replace(/:.*$/, "") : seg).replace(/[. ]+$/, "");
+      return seg.replace(/:.*$/, "").replace(/[. ]+$/, "");
     })
     .filter((seg, i) => i === 0 || seg !== "")
     .join("/");
@@ -90,7 +89,7 @@ export function toRepoTarget(
   platform: NodeJS.Platform = process.platform,
 ): string | null {
   let a = p.trim().replace(/\\/g, "/");
-  if (platform === "win32") a = a.replace(/^\/{1,2}\?\//, "");
+  if (platform === "win32") a = a.replace(/^\/{1,2}[?.]\//, "");
   const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
   const c = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
   let abs = posix.normalize(isAbs(a) ? a : posix.join(c, a));
@@ -113,7 +112,7 @@ export function protectedClass(
   if (q === k(".context/memories.jsonl")) return "memories";
   if (q.startsWith(k(".context/.cache/"))) return "cache";
   if (q.startsWith(k(".beads/"))) return "beads";
-  const m = /^\.context\/decisions\/(\d{4})-[^/]+\.md$/i.exec(repoPath);
+  const m = /^\.context\/decisions\/(\d{4})-[^/]+\.md$/i.exec(win ? winAlias(repoPath) : repoPath);
   if (m && Number(m[1]) >= 1) return "decision";
   return null;
 }
@@ -139,7 +138,7 @@ export function shellSegments(command: string): string[] {
 
 const SEG = String.raw`[^\s"'\`;|&<>()]`;
 const SEGNS = String.raw`[^\s"'\`;|&<>()/]`;
-const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.context/${SEGNS}*[*?\[{]${SEG}*|\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
+const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.c(?:o(?:n(?:t(?:e(?:x(?:t)?)?)?)?)?)?[*?\[{]${SEG}*|\.context/${SEGNS}*[*?\[{]${SEG}*|\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
 const mentionRe = (): RegExp => new RegExp(MENTION_SRC, "gi");
 const normMention = (m: string): string => m.replace(/^(?:\.\/)+/, "");
 
@@ -194,7 +193,7 @@ const ALL_MENTIONS = new Set(
 const GIT_WRITE = new Set(["checkout", "restore", "rm", "mv"]);
 const NESTED_SHELLS = new Set(["bash", "sh", "zsh", "cmd", "pwsh", "powershell"]);
 const WRITE_API_RE =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content|rmSync|rmdirSync|rmdir|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\b|\brm\(|File\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
 
 function gitSubcommand(rest: string[]): string | null {
   for (let i = 0; i < rest.length; i++) {
@@ -233,7 +232,7 @@ function segmentWrites(seg: string, out: string[]): void {
       const hit = dest === null ? null : tokenMention(dest);
       if (hit) out.push(hit);
     } else if (name === "sed") {
-      if (rest.some((w) => /^-[A-Za-z]*i/.test(w) || /^--in-place(?:=|$)/.test(w))) {
+      if (rest.some((w) => /^-[A-Za-z]*[iI]/.test(w) || /^--in-place(?:=|$)/.test(w))) {
         out.push(...mentions);
       }
     } else if (name === "perl") {
