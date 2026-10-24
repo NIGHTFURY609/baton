@@ -16,10 +16,11 @@ import {
 } from "../core/tasks/native/model.js";
 import type { SortPolicy, TaskService, UpdateInput } from "../core/tasks/native/service.js";
 import { openTaskService } from "../core/tasks/native/store.js";
+import { checkCommands } from "../core/verify.js";
 import { action, projectRoot } from "./_shared.js";
 
 /** Exit codes for task errors: lookups fail with 1, refused state changes with 2. */
-function toBatonError(err: TaskError): BatonError {
+export function toBatonError(err: TaskError): BatonError {
   const blocked = [
     "already_claimed",
     "not_claimable",
@@ -346,12 +347,35 @@ export function registerTask(program: Command): void {
     .description("close tasks (refuses with open children or open blockers unless --force)")
     .argument("<ids...>")
     .option("-r, --reason <text>", "close reason", "Closed")
-    .option("-f, --force", "close even with open children or blockers")
+    .option(
+      "-f, --force",
+      "close even with open children, open blockers or a check: label (recorded as forced)",
+    )
     .option("--json", "print JSON")
     .action(
       action(async (ids: string[], o: { reason: string; force?: boolean; json?: boolean }) => {
         await withTasks(g(), (s) => {
-          const closed = ids.map((id) => s.close(id, o.reason, Boolean(o.force)));
+          const checked = new Set<string>();
+          for (const id of ids) {
+            const issue = s.get(id);
+            if (!issue) continue;
+            const cmds = checkCommands(issue.labels);
+            if (cmds.length === 0) continue;
+            if (!o.force) {
+              throw new BatonError(
+                `${id} has a check (${cmds.join("; ")}); close it with baton verify ${id}, or with task close --force and a reason`,
+                ExitCode.Blocked,
+              );
+            }
+            checked.add(id);
+          }
+          const closed = ids.map((id) =>
+            s.close(
+              id,
+              checked.has(id) ? `forced (check not run): ${o.reason}` : o.reason,
+              Boolean(o.force),
+            ),
+          );
           out(o.json, closed, () => closed.map((i) => `closed ${i.id}`).join("\n"));
         });
       }),

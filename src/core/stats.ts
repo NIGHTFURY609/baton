@@ -107,7 +107,7 @@ function resultChars(content: unknown): number {
 
 function closedTaskIds(command: string): string[] {
   const ids: string[] = [];
-  for (const m of command.matchAll(/\btask\s+close\s+([^\n;&|]*)/g)) {
+  for (const m of command.matchAll(/\b(?:task\s+close|verify)\s+([^\n;&|]*)/g)) {
     for (const tok of (m[1] ?? "").split(/\s+/).filter(Boolean)) {
       if (tok.startsWith("-")) break;
       if (TASK_ID_RE.test(tok)) ids.push(tok);

@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -59,9 +58,10 @@ describe("/init-spec and /checkpoint through the CLI", () => {
     expect(created.exitCode).toBe(0);
     const id = (JSON.parse(created.stdout) as { id: string }).id;
     expect((await runCli(["task", "update", id, "--claim"], dir)).exitCode).toBe(0);
-    execFileSync("node", ["-e", "0"]);
-    const closed = await runCli(["task", "close", id, "--reason", "check passed: node -e 0"], dir);
+    appendFileSync(join(dir, "src", "db", "store.ts"), "export const more = 2;\n");
+    const closed = await runCli(["verify", id], dir);
     expect(closed.exitCode).toBe(0);
+    expect(closed.stdout).toContain(`closed ${id}`);
 
     // handoff
     expect((await runCli(["handoff", "--reason", "manual"], dir)).exitCode).toBe(0);

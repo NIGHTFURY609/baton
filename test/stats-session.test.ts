@@ -118,6 +118,18 @@ describe("sessionMetrics", () => {
     expect(m.tasksClosed).toEqual([]);
   });
 
+  it("counts baton verify as a close", () => {
+    const records = asRecords([
+      userPrompt("go"),
+      toolUse("v1", "Bash", { command: "node dist/baton.mjs verify bt-3 --no-diff" }),
+      toolResult("v1", "closed bt-3"),
+      toolUse("v2", "Bash", { command: "baton verify-doc auth" }),
+      toolResult("v2", "ok"),
+    ]);
+    const m = sessionMetrics(records, { sessionId: "s", root: "/w", platform: "linux" });
+    expect(m.tasksClosed).toEqual(["bt-3"]);
+  });
+
   it("ignores sidechain records", () => {
     const side = {
       ...toolUse("a", "Read", { file_path: "/w/.context/s.md" }),
