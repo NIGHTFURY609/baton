@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { planCompile } from "../src/core/compile.js";
 import { ConfigSchema } from "../src/core/config.js";
 import { parseFileSection, parseSections } from "../src/core/frontmatter.js";
 import { loadSectionIndex } from "../src/core/sections.js";
@@ -52,5 +53,11 @@ describe("dogfood .context/", () => {
       expect.arrayContaining(["mission-packet", "state", "adr-0007"]),
     );
     expect(idx.byId.get("adr-0007")?.meta.supersededBy).toBe("adr-0009");
+  });
+
+  it("AGENTS.md is compiled from rules.md", async () => {
+    const plan = await planCompile(REPO_ROOT);
+    for (const f of plan.files) expect(f.action).toBe("unchanged");
+    expect(plan.warnings).toEqual([]);
   });
 });
