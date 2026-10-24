@@ -102,9 +102,21 @@ export interface RenderedHookOutput {
 }
 
 const NATIVE_NAME: Record<Harness, Partial<Record<HookEvent, string>>> = {
-  claude: { "session-start": "SessionStart", "pre-tool-use": "PreToolUse" },
-  codex: { "session-start": "SessionStart", "pre-tool-use": "PreToolUse" },
-  gemini: { "session-start": "SessionStart", "pre-tool-use": "BeforeTool" },
+  claude: {
+    "session-start": "SessionStart",
+    "pre-tool-use": "PreToolUse",
+    "post-tool-use": "PostToolUse",
+  },
+  codex: {
+    "session-start": "SessionStart",
+    "pre-tool-use": "PreToolUse",
+    "post-tool-use": "PostToolUse",
+  },
+  gemini: {
+    "session-start": "SessionStart",
+    "pre-tool-use": "BeforeTool",
+    "post-tool-use": "AfterTool",
+  },
 };
 
 /**

@@ -69,7 +69,8 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
  * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0020);
  *                     preflight context on dependency/migration files          [Phase 2]
- * - post-tool-use  -> mark sections whose source_paths were touched as aging   [Phase 2, no-op now]
+ * - post-tool-use  -> notice the sections whose source_paths an edit touched, once per
+ *                     session (post-tool-use.ts)                              [Phase 2]
  * - stop           -> opt-in: verify the active task before stopping           [Phase 2, no-op now]
  */
 export const HANDLERS: Record<HookEvent, Handler> = {
@@ -83,7 +84,8 @@ export const HANDLERS: Record<HookEvent, Handler> = {
     SESSION_END_TAIL_BYTES,
   ),
   "pre-tool-use": async (input, ctx) => (await import("./pre-tool-use.js")).preToolUse(input, ctx),
-  "post-tool-use": noop,
+  "post-tool-use": async (input, ctx) =>
+    (await import("./post-tool-use.js")).postToolUse(input, ctx),
   stop: noop,
 };
 
