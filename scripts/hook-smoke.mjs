@@ -318,6 +318,8 @@ function main() {
         for (let i = 0; i < runs; i++) {
           const input = JSON.stringify({
             hook_event_name: c.event,
+            // Both plugin roots share one project, and a notice fires once per session id,
+            // so the id carries the root index.
             session_id: `smoke-${rootIdx}-${i}`,
             cwd: project,
             tool_name: c.tool,
@@ -386,7 +388,9 @@ function main() {
       for (let i = 0; i < runs; i++) {
         const input = JSON.stringify({
           hook_event_name: event,
-          session_id: `smoke-${i}`,
+          // touched.jsonl in this repo persists between invocations: a fresh id per run keeps
+          // the notice path measured.
+          session_id: `smoke-${process.pid}-${Date.now()}-${i}`,
           cwd: repo,
           tool_name: "Edit",
           tool_input: { file_path: join(repo, "src", "core", "drift.ts") },
