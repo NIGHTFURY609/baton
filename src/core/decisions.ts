@@ -10,14 +10,23 @@ import { BatonError } from "./errors.js";
 
 export const ADR_FILE_RE = /^(\d{4})-([a-z0-9-]+)\.md$/;
 
+/** Any numbered record file, whatever its slug: numbering must see every one. */
+const ADR_NUMBERED_RE = /^(\d{4})-.+\.md$/;
+
+/**
+ * ASCII file slug: NFKD folds accents to their base letter, everything else becomes
+ * a dash. A title with no ASCII letters or digits gets the slug "decision".
+ */
 export function slugify(title: string): string {
-  return title
-    .toLowerCase()
+  const slug = title
     .normalize("NFKD")
-    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/\p{Mark}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60)
     .replace(/-+$/, "");
+  return slug === "" ? "decision" : slug;
 }
 
 export function adrFileName(num: number, title: string): string {
@@ -33,7 +42,7 @@ export async function nextAdrNumber(dir: string): Promise<number> {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
   const nums = entries
-    .map((f) => ADR_FILE_RE.exec(f)?.[1])
+    .map((f) => ADR_NUMBERED_RE.exec(f)?.[1])
     .filter((n): n is string => n !== undefined)
     .map(Number);
   return Math.max(0, ...nums) + 1;

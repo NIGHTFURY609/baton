@@ -4,8 +4,16 @@ import { join, posix } from "node:path";
 import type { Config } from "./config.js";
 import { fencedLines } from "./fences.js";
 import { classifyFreshness } from "./freshness.js";
-import { changedFilesPerCommit, headSha, ignoredPaths, isGitRepo, listRepoFiles } from "./git.js";
-import { globToRegExp } from "./glob.js";
+import {
+  changedFilesPerCommit,
+  headSha,
+  ignoredPaths,
+  isGitRepo,
+  listRepoFiles,
+  porcelainPath,
+  statusLines,
+} from "./git.js";
+import { globToRegExp, matchesAny } from "./glob.js";
 import { ContextPaths, contextPath } from "./paths.js";
 import type { IndexedSection } from "./sections.js";
 import { sha256 } from "./tasks/native/jsonl.js";
@@ -25,6 +33,8 @@ export interface SectionFreshness {
   deadRefs: string[];
   /** Commits since verified_at that change any file outside .context/; null when unverified, unknown sha or not a git repo. */
   commitsOutsideContext: number | null;
+  /** Dirty working-tree paths (outside .context/) that match the section's sources; set only when non-empty. */
+  uncommitted?: string[];
 }
 
 export interface FreshnessReport {
@@ -123,11 +133,16 @@ export async function evaluateFreshness(
   const shas = [
     ...new Set(sections.map((s) => s.meta.verifiedAt).filter((v): v is string => v !== null)),
   ];
-  const [head, files, settled] = await Promise.all([
+  const [head, files, settled, status] = await Promise.all([
     headSha(root),
     listRepoFiles(root),
     Promise.allSettled(shas.map((sha) => changedFilesPerCommit(root, sha))),
+    // Untracked files one by one, so a new directory still matches a source glob.
+    statusLines(root, { untrackedAll: true }),
   ]);
+  const dirty = [
+    ...new Set(status.map(porcelainPath).filter((p) => !matchesAny(p, FRESHNESS_IGNORED_GLOBS))),
+  ];
   // A rejected call (unknown sha, or a stamp that is not hex) leaves the sha out.
   const commitsBySha = new Map<string, string[][]>();
   settled.forEach((r, i) => {
@@ -178,12 +193,31 @@ export async function evaluateFreshness(
       }
     }
 
-    return {
+    const sf: SectionFreshness = {
       section,
       result: classifyFreshness({ meta, commitsSince, deadRefs }, staleAfter),
       deadRefs,
       commitsOutsideContext,
     };
+    // Uncommitted source changes age an otherwise fresh, verified section.
+    if (
+      sf.result.level === "fresh" &&
+      meta.sourcePaths.length > 0 &&
+      meta.verifiedAt !== null &&
+      commitsBySha.has(meta.verifiedAt)
+    ) {
+      const touched = dirty.filter((p) => matchesAny(p, meta.sourcePaths));
+      if (touched.length > 0) {
+        const more = touched.length > 3 ? ` (+${touched.length - 3} more)` : "";
+        sf.result = {
+          level: "aging",
+          commitsSince: sf.result.commitsSince,
+          reason: `uncommitted changes in ${touched.slice(0, 3).join(", ")}${more}`,
+        };
+        sf.uncommitted = touched;
+      }
+    }
+    return sf;
   });
 
   return { head, sections: out, counts: tally(out) };
@@ -210,13 +244,14 @@ export function bodyHash(body: string): string {
   return sha256(body).slice(0, 12);
 }
 
-/** One "flag" event per aging or stale section. */
+/** One "flag" event per aging or stale section, except uncommitted-only aging (work in progress). */
 export function flagEvents(report: FreshnessReport, ts: string): DriftEvent[] {
   const head = report.head?.slice(0, 12) ?? null;
   const events: DriftEvent[] = [];
   for (const s of report.sections) {
     const level = s.result.level;
     if (level !== "aging" && level !== "stale") continue;
+    if (s.uncommitted !== undefined) continue;
     events.push({
       v: 1,
       ts,

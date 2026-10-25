@@ -6,7 +6,7 @@ import { commitAll, makeTempDir, runGit, writeFiles } from "./helpers/repo.js";
 import { isolateClaudeConfig } from "./helpers/transcript.js";
 
 describe("/init-spec and /checkpoint through the CLI", () => {
-  it("walks both command sequences with the Phase 2 fallbacks", async () => {
+  it("walks both command sequences ", async () => {
     isolateClaudeConfig();
     process.env.BATON_ACTOR = "tester";
     const dir = makeTempDir();
@@ -43,14 +43,26 @@ describe("/init-spec and /checkpoint through the CLI", () => {
     expect(label("storage")).toBe("fresh");
     expect(label("state")).toBe("unverified");
 
-    // init-spec's decide fallback
+    // decide
     const decide = await runCli(
-      ["task", "create", "Decide: SQLite per user", "-t", "decision", "--spec", "storage"],
+      [
+        "decide",
+        "SQLite per user",
+        "--status",
+        "accepted",
+        "--spec",
+        "storage",
+        "--context",
+        "One file per user keeps backups simple.",
+        "--outcome",
+        "Use one SQLite file per user.",
+      ],
       dir,
     );
     expect(decide.exitCode).toBe(0);
+    expect(decide.stdout).toContain("created ADR 0001 (accepted)");
 
-    // checkpoint's verify fallback
+    // checkpoint's verify
     const created = await runCli(
       ["task", "create", "Add store", "--spec", "storage", "--check", "node -e 0", "--json"],
       dir,
@@ -73,8 +85,11 @@ describe("/init-spec and /checkpoint through the CLI", () => {
     expect((await runCli(["drift", "--fail-on", "stale"], dir)).exitCode).toBe(0);
 
     // packet
+    expect(
+      (await runCli(["task", "create", "Migrate store", "--spec", "storage"], dir)).exitCode,
+    ).toBe(0);
     const packet = await runCli(["mission"], dir);
-    expect(packet.stdout).toContain("Decide: SQLite per user");
+    expect(packet.stdout).toContain("Decision ADR 0001 (accepted): SQLite per user");
     expect(packet.stdout).toContain('Spec section "Storage"');
   });
 });

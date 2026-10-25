@@ -42,7 +42,7 @@ export function editTargets(toolName: string, toolInput: Record<string, unknown>
   // Codex apply_patch: paths appear in "*** Update File: <path>" style headers.
   if (toolName === "apply_patch") {
     const patch = typeof toolInput.input === "string" ? toolInput.input : "";
-    return [...patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) =>
+    return [...patch.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) =>
       (m[1] ?? "").trim(),
     );
   }
@@ -66,6 +66,21 @@ export const SHELL_TOOLS: readonly string[] = ["Bash", "PowerShell", "run_shell_
 
 const isAbs = (p: string): boolean => /^[A-Za-z]:\//.test(p) || p.startsWith("/");
 
+/**
+ * Windows treats `STATE.md.`, `STATE.md::$DATA` and `STATE.md:stream` as the same file:
+ * drop a stream suffix on the last segment and trailing dots and spaces on every segment.
+ */
+function winAlias(p: string): string {
+  const parts = p.split("/");
+  return parts
+    .map((seg, i) => {
+      if (i === 0 && /^[A-Za-z]:$/.test(seg)) return seg;
+      return seg.replace(/:.*$/, "").replace(/[. ]+$/, "");
+    })
+    .filter((seg, i) => i === 0 || seg !== "")
+    .join("/");
+}
+
 /** Repo-relative POSIX path of `p` (as a tool gave it), or null when it lies outside `root`. */
 export function toRepoTarget(
   p: string,
@@ -73,10 +88,12 @@ export function toRepoTarget(
   cwd: string,
   platform: NodeJS.Platform = process.platform,
 ): string | null {
-  const a = p.trim().replace(/\\/g, "/");
+  let a = p.trim().replace(/\\/g, "/");
+  if (platform === "win32") a = a.replace(/^\/{1,2}[?.]\//, "");
   const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
   const c = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  const abs = posix.normalize(isAbs(a) ? a : posix.join(c, a));
+  let abs = posix.normalize(isAbs(a) ? a : posix.join(c, a));
+  if (platform === "win32") abs = winAlias(abs);
   const fold = (x: string): string => (platform === "win32" ? x.toLowerCase() : x);
   if (!fold(abs).startsWith(`${fold(r)}/`)) return null;
   return abs.slice(r.length + 1);
@@ -88,14 +105,14 @@ export function protectedClass(
   platform: NodeJS.Platform = process.platform,
 ): ProtectedClass | null {
   const win = platform === "win32";
-  const q = win ? repoPath.toLowerCase() : repoPath;
+  const q = win ? winAlias(repoPath).toLowerCase() : repoPath;
   const k = (s: string): string => (win ? s.toLowerCase() : s);
   if (q === k(".context/STATE.md")) return "state";
   if (q === k(".context/tasks.jsonl")) return "tasks";
   if (q === k(".context/memories.jsonl")) return "memories";
   if (q.startsWith(k(".context/.cache/"))) return "cache";
   if (q.startsWith(k(".beads/"))) return "beads";
-  const m = /^\.context\/decisions\/(\d{4})-[^/]+\.md$/i.exec(repoPath);
+  const m = /^\.context\/decisions\/(\d{4})-[^/]+\.md$/i.exec(win ? winAlias(repoPath) : repoPath);
   if (m && Number(m[1]) >= 1) return "decision";
   return null;
 }
@@ -120,7 +137,8 @@ export function shellSegments(command: string): string[] {
 }
 
 const SEG = String.raw`[^\s"'\`;|&<>()]`;
-const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
+const SEGNS = String.raw`[^\s"'\`;|&<>()/]`;
+const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.c(?:o(?:n(?:t(?:e(?:x(?:t)?)?)?)?)?)?[*?\[{]${SEG}*|\.context/${SEGNS}*[*?\[{]${SEG}*|\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
 const mentionRe = (): RegExp => new RegExp(MENTION_SRC, "gi");
 const normMention = (m: string): string => m.replace(/^(?:\.\/)+/, "");
 
@@ -174,8 +192,42 @@ const ALL_MENTIONS = new Set(
 );
 const GIT_WRITE = new Set(["checkout", "restore", "rm", "mv"]);
 const NESTED_SHELLS = new Set(["bash", "sh", "zsh", "cmd", "pwsh", "powershell"]);
+/** Commands whose arguments can be a script that calls a write API. */
+const SCRIPT_HOSTS = new Set([
+  "node",
+  "deno",
+  "bun",
+  "python",
+  "python3",
+  "py",
+  "perl",
+  "ruby",
+  "php",
+  "pwsh",
+  "powershell",
+]);
+/**
+ * Known commands whose arguments are data, not code: a write-API name there is a search
+ * pattern, a message or text to print. Their real writes are handled by the rules above.
+ */
+const DATA_ARG_COMMANDS = new Set([
+  ...DEST_ONLY,
+  ...ALL_MENTIONS,
+  "git",
+  "sed",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "findstr",
+  "select-string",
+  "sls",
+  "echo",
+  "printf",
+  "baton",
+]);
 const WRITE_API_RE =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
 
 function gitSubcommand(rest: string[]): string | null {
   for (let i = 0; i < rest.length; i++) {
@@ -185,6 +237,26 @@ function gitSubcommand(rest: string[]): string | null {
     else return w.toLowerCase();
   }
   return null;
+}
+
+/** `git restore` writes the working tree unless it is limited to the index (`--staged` alone). */
+function gitRestoreWrites(rest: string[]): boolean {
+  const short = (letter: string) => (w: string) => /^-[A-Za-z]+$/.test(w) && w.includes(letter);
+  const staged = rest.some((w) => w === "--staged" || short("S")(w));
+  const worktree = rest.some((w) => w === "--worktree" || short("W")(w));
+  return !staged || worktree;
+}
+
+/**
+ * Whether a write-API name in this command can be code: a script host (except baton's
+ * own CLI) or anything that is not a known command, such as a PowerShell
+ * `[IO.File]::…` expression.
+ */
+function mayRunWriteApi(name: string, rest: string[]): boolean {
+  if (SCRIPT_HOSTS.has(name)) {
+    return !(name === "node" && /(?:^|\/)baton\.mjs$/i.test(unquote(rest[0] ?? "")));
+  }
+  return !DATA_ARG_COMMANDS.has(name);
 }
 
 function destinationOf(rest: string[]): string | null {
@@ -214,18 +286,20 @@ function segmentWrites(seg: string, out: string[]): void {
       const hit = dest === null ? null : tokenMention(dest);
       if (hit) out.push(hit);
     } else if (name === "sed") {
-      if (rest.some((w) => w === "-i" || w.startsWith("-i") || w === "--in-place")) {
+      if (rest.some((w) => /^-[A-Za-z]*[iI]/.test(w) || /^--in-place(?:=|$)/.test(w))) {
         out.push(...mentions);
       }
     } else if (name === "perl") {
       if (rest.some((w) => /^-\w*i/.test(w))) out.push(...mentions);
     } else if (name === "git") {
       const sub = gitSubcommand(rest);
-      if (sub !== null && GIT_WRITE.has(sub)) out.push(...mentions);
+      if (sub !== null && GIT_WRITE.has(sub) && (sub !== "restore" || gitRestoreWrites(rest))) {
+        out.push(...mentions);
+      }
     } else if (ALL_MENTIONS.has(name)) {
       out.push(...mentions);
     }
-    if (WRITE_API_RE.test(seg)) out.push(...mentions);
+    if (mayRunWriteApi(name, rest) && WRITE_API_RE.test(seg)) out.push(...mentions);
   }
   if (NESTED_SHELLS.has(name)) {
     const at = rest.findIndex((w) => ["-c", "/c", "-command"].includes(w.toLowerCase()));
@@ -317,7 +391,7 @@ export function applyEdits(
   input: Record<string, unknown>,
   current: string,
 ): string | null {
-  const cur = lf(current.replace(/^﻿/, ""));
+  const cur = lf(current.replace(/^\uFEFF/, ""));
   if (tool === "Write" || tool === "write_file") {
     return typeof input.content === "string" ? input.content : null;
   }
@@ -365,7 +439,7 @@ export function denyReason(rule: ProtectedRule, path: string, status?: string): 
   const num = /(\d{4})-/.exec(path)?.[1] ?? "NNNN";
   switch (rule) {
     case "state":
-      return "baton: .context/STATE.md is generated by `baton handoff` and is never edited by hand (ADR 0015). `baton handoff` regenerates it; lasting notes go in a task comment (`baton task comment <id> …`), a knowledge file or a decision.";
+      return "baton: .context/STATE.md is generated by `baton handoff` and is never edited by hand (ADR 0023). `baton handoff` regenerates it; lasting notes go in a task comment (`baton task comment <id> …`), a knowledge file or a decision.";
     case "tasks":
       return "baton: .context/tasks.jsonl is the task store and changes only through `baton task …` (ADR 0009): create, update --claim, comment, dep add, close. `baton verify <id>` runs a task's check and closes it.";
     case "memories":

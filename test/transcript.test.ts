@@ -184,6 +184,88 @@ describe("tool-call summaries", () => {
   });
 });
 
+describe("shell tool-call summaries: command names only", () => {
+  const one = (name: string, command: string) =>
+    recentToolCalls(
+      parseTranscript(toJsonl([toolUse("s", name, { command })])).records,
+      "c:\\work\\demo",
+      1,
+      "win32",
+    )[0];
+
+  it.each([
+    ["Bash", "mysql -pW@ter123 db", "Bash: mysql (+2 args)", ["W@ter123", "ter123", "db"]],
+    ["Bash", "curl -u user:pass https://x", "Bash: curl (+3 args)", ["user", "pass", "https://x"]],
+    [
+      "PowerShell",
+      '"x" | ConvertTo-SecureString',
+      "PowerShell: (expression) | ConvertTo-SecureString",
+      ['"x"'],
+    ],
+    ["Bash", "zip -r a.zip f -P secret", "Bash: zip (+5 args)", ["secret", "a.zip"]],
+    [
+      "run_shell_command",
+      "API_KEY=hunter2 npm run deploy -- --token abc",
+      "run_shell_command: npm run deploy (+3 args)",
+      ["hunter2", "API_KEY", "abc"],
+    ],
+    [
+      "Bash",
+      "X=$(echo hunter2 secretword) && git push",
+      "Bash: (assignment) && git push",
+      ["hunter2", "secretword"],
+    ],
+    [
+      "PowerShell",
+      "New-Object PSCredential 'u', (ConvertTo-SecureString 'hunter2' -AsPlainText -Force)",
+      "PowerShell: New-Object (+3 args)",
+      ["hunter2", "PSCredential"],
+    ],
+    ["Bash", 'echo "a | hunter2 x"', "Bash: echo (+1 args)", ["hunter2"]],
+    [
+      "Bash",
+      'git -c user.password=hunter2 commit -m "msg"',
+      "Bash: git commit (+4 args)",
+      ["hunter2", "msg"],
+    ],
+    [
+      "Bash",
+      "cat C:\\Users\\jeswi\\.aws\\credentials",
+      "Bash: cat (+1 args)",
+      ["jeswi", "credentials"],
+    ],
+    [
+      "PowerShell",
+      '[IO.File]::WriteAllText("C:\\Users\\jeswi\\k.txt", "hunter2")',
+      "PowerShell: (expression)",
+      ["hunter2", "jeswi", "WriteAllText"],
+    ],
+  ])("%s %s keeps no argument", (tool, command, expected, secrets) => {
+    const out = one(tool, command);
+    expect(out).toBe(expected);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it.each([
+    ["git status", "Bash: git status"],
+    ['git commit -m "x" -- a.ts', "Bash: git commit (+4 args)"],
+    ["npm run check 2>&1 | tee check.log", "Bash: npm run check (+1 args) | tee (+1 args)"],
+    ["npm install left-pad", "Bash: npm (+2 args)"],
+    [
+      'node dist/baton.mjs task close bt-vyr.2 --reason "done"',
+      "Bash: baton task close bt-vyr.2 (+2 args)",
+    ],
+    ["baton verify bt-w2a", "Bash: baton verify bt-w2a"],
+    ['node dist/baton.mjs decide "Title" --supersedes 15', "Bash: baton decide (+3 args)"],
+    ["node script.js --token abc", "Bash: node (+3 args)"],
+    ["C:\\tools\\rm.cmd x", "Bash: rm.cmd (+1 args)"],
+    ["cd src; ls", "Bash: cd (+1 args); ls"],
+    ["npm run build && node dist/baton.mjs task ready", "Bash: npm run build && baton task ready"],
+  ])("summarises %s", (command, expected) => {
+    expect(one("Bash", command)).toBe(expected);
+  });
+});
+
 describe("redactSecrets", () => {
   it("redacts secrets and leaves ordinary commands alone", () => {
     const bearer = redactSecrets('curl -H "Authorization: Bearer abcdef1234567890"');
@@ -373,7 +455,7 @@ describe("redactSecrets", () => {
   it("drops a token that the scan cap cut, so no fragment survives path shortening", () => {
     const cmd = `cat C:\\a\\${"x".repeat(1000)}\\f.txt ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`;
     const out = summarizeToolUse(
-      { id: "1", name: "Bash", input: { command: cmd }, isError: false },
+      { id: "1", name: "Grep", input: { pattern: cmd }, isError: false },
       "/w",
       "linux",
     );
@@ -420,7 +502,7 @@ describe("redactSecrets", () => {
   });
 });
 
-describe("absolute paths inside Bash, Glob and Grep arguments", () => {
+describe("absolute paths inside Glob, Grep and Task arguments", () => {
   const summary = (
     name: string,
     input: Record<string, unknown>,
@@ -431,18 +513,18 @@ describe("absolute paths inside Bash, Glob and Grep arguments", () => {
 
   it("shortens out-of-repo Windows and POSIX paths", () => {
     const win = summary(
-      "Bash",
-      { command: "cat C:\\Users\\jeswi\\.aws\\credentials" },
+      "Task",
+      { description: "cat C:\\Users\\jeswi\\.aws\\credentials" },
       "c:\\work\\demo",
       "win32",
     );
-    expect(win).toBe("Bash: cat …/credentials");
+    expect(win).toBe("Task: cat …/credentials");
     expect(win).not.toContain("jeswi");
-    expect(summary("Bash", { command: "cat C:/Users/jeswi/.aws/credentials" }, "/w", "linux")).toBe(
-      "Bash: cat …/credentials",
-    );
-    expect(summary("Bash", { command: "cat /home/alice/.ssh/id_rsa" }, "/w", "linux")).toBe(
-      "Bash: cat …/id_rsa",
+    expect(
+      summary("Task", { description: "cat C:/Users/jeswi/.aws/credentials" }, "/w", "linux"),
+    ).toBe("Task: cat …/credentials");
+    expect(summary("Task", { description: "cat /home/alice/.ssh/id_rsa" }, "/w", "linux")).toBe(
+      "Task: cat …/id_rsa",
     );
     expect(summary("Grep", { pattern: "/Users/alice/notes.md" }, "/w", "linux")).toBe(
       "Grep …/notes.md",
@@ -459,21 +541,21 @@ describe("absolute paths inside Bash, Glob and Grep arguments", () => {
     ["cat //fileserver/share/jeswi/secrets.txt", "cat …/secrets.txt"],
     ["cat file:///home/alice/x", "cat …/x"],
     ["cat file:///C:/Users/jeswi/x", "cat …/x"],
-  ])("shortens %s on both platforms", (command, expected) => {
+  ])("shortens %s on both platforms", (description, expected) => {
     for (const platform of ["win32", "linux"] as const) {
-      const out = summary("Bash", { command }, "c:\\work\\demo", platform);
-      expect(out).toBe(`Bash: ${expected}`);
+      const out = summary("Task", { description }, "c:\\work\\demo", platform);
+      expect(out).toBe(`Task: ${expected}`);
       expect(out).not.toMatch(/jeswi|alice|fileserver/);
     }
   });
 
   it("resolves Git Bash and WSL drive paths against the root on Windows", () => {
     expect(
-      summary("Bash", { command: "cat /c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
-    ).toBe("Bash: cat src/a.ts");
+      summary("Task", { description: "cat /c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Task: cat src/a.ts");
     expect(
-      summary("Bash", { command: "cat /mnt/c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
-    ).toBe("Bash: cat src/a.ts");
+      summary("Task", { description: "cat /mnt/c/work/demo/src/a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Task: cat src/a.ts");
   });
 
   it("shortens paths in Task and Agent descriptions", () => {
@@ -487,10 +569,10 @@ describe("absolute paths inside Bash, Glob and Grep arguments", () => {
 
   it("makes paths under the repo root relative and leaves other tokens alone", () => {
     expect(
-      summary("Bash", { command: "cat C:\\Work\\Demo\\src\\a.ts" }, "c:\\work\\demo", "win32"),
-    ).toBe("Bash: cat src/a.ts");
-    expect(summary("Bash", { command: "ls /dev/null https://x.dev/home/y" }, "/w", "linux")).toBe(
-      "Bash: ls /dev/null https://x.dev/home/y",
-    );
+      summary("Task", { description: "cat C:\\Work\\Demo\\src\\a.ts" }, "c:\\work\\demo", "win32"),
+    ).toBe("Task: cat src/a.ts");
+    expect(
+      summary("Task", { description: "ls /dev/null https://x.dev/home/y" }, "/w", "linux"),
+    ).toBe("Task: ls /dev/null https://x.dev/home/y");
   });
 });

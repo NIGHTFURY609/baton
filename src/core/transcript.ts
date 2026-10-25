@@ -398,6 +398,152 @@ function shownPath(p: string, root: string, platform: NodeJS.Platform): string {
 
 const PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
+/** Shell tools whose `command` is summarised by command names only (as SHELL_TOOLS in hooks/guards.ts). */
+const SHELL_SUMMARY_TOOLS = new Set(["Bash", "PowerShell", "run_shell_command"]);
+
+/** A simple command of a shell line and the operator after it. */
+interface ShellPart {
+  words: string[];
+  op: string;
+}
+
+/**
+ * Split one shell line into simple commands and their words. Quotes and (), {} groups
+ * are kept whole and never split, so text inside them can never become a command name.
+ * An unclosed quote or group runs to the end of the line.
+ */
+function shellParts(line: string): ShellPart[] {
+  const parts: ShellPart[] = [];
+  let words: string[] = [];
+  let word = "";
+  let quote: string | null = null;
+  let depth = 0;
+  const endWord = (): void => {
+    if (word !== "") words.push(word);
+    word = "";
+  };
+  const endPart = (op: string): void => {
+    endWord();
+    parts.push({ words, op });
+    words = [];
+  };
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charAt(i);
+    if (quote !== null) {
+      word += c;
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      word += c;
+    } else if (c === "(" || c === "{") {
+      depth++;
+      word += c;
+    } else if ((c === ")" || c === "}") && depth > 0) {
+      depth--;
+      word += c;
+    } else if (depth > 0) {
+      word += c;
+    } else if (/\s/.test(c)) {
+      endWord();
+    } else if (c === "&" && (line.charAt(i - 1) === ">" || line.charAt(i + 1) === ">")) {
+      word += c; // 2>&1, &>
+    } else if ((c === "&" || c === "|") && line.charAt(i + 1) === c) {
+      endPart(c + c);
+      i++;
+    } else if (c === "&" || c === "|" || c === ";") {
+      endPart(c);
+    } else {
+      word += c;
+    }
+  }
+  endPart("");
+  return parts.filter((p) => p.words.length > 0);
+}
+
+const SHELL_WRAPPERS = new Set(["sudo", "env", "command", "nohup", "time"]);
+const SAFE_NAME = /^[A-Za-z0-9_][\w.+-]*$/;
+const SUBCOMMAND = /^[a-z][a-z-]*$/;
+const SCRIPT_NAME = /^[\w:.-]+$/;
+const TASK_ID = /^[a-z][a-z0-9]*-[a-z0-9]+(?:\.\d+)*$/;
+const BATON_GROUPS = new Set(["task", "hook"]);
+
+const withCount = (shown: string[], rest: number): string =>
+  rest > 0 ? `${shown.join(" ")} (+${rest} args)` : shown.join(" ");
+
+/** The words shown for git: the subcommand after global options. */
+function gitShown(rest: string[]): string[] {
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i] ?? "";
+    if (w === "-C" || w === "-c") i++;
+    else if (w.startsWith("-")) continue;
+    else return SUBCOMMAND.test(w) ? [w] : [];
+  }
+  return [];
+}
+
+/** The words shown for baton: `<sub>`, a group's action, then an optional task id. */
+function batonShown(rest: string[]): string[] {
+  const shown: string[] = [];
+  const sub = rest[0] ?? "";
+  if (!SUBCOMMAND.test(sub)) return shown;
+  shown.push(sub);
+  if (BATON_GROUPS.has(sub) && SUBCOMMAND.test(rest[1] ?? "")) shown.push(rest[1] ?? "");
+  const id = rest[shown.length] ?? "";
+  if (TASK_ID.test(id)) shown.push(id);
+  return shown;
+}
+
+/** One simple command as its name, an allowlisted subcommand and an argument count. */
+function summarizeShellPart(words: string[]): string {
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i] ?? "";
+    if (/^[A-Za-z_]\w*=/.test(w) || SHELL_WRAPPERS.has(w.toLowerCase())) i++;
+    else break;
+  }
+  if (i >= words.length) return "(assignment)";
+  const raw = (words[i] ?? "").replace(/\\/g, "/");
+  const name = raw.slice(raw.lastIndexOf("/") + 1);
+  if (!SAFE_NAME.test(name)) return "(expression)";
+  const rest = words.slice(i + 1);
+  const cmd = name.toLowerCase().replace(/\.(?:exe|cmd)$/, "");
+  const firstArg = (rest[0] ?? "").replace(/\\/g, "/");
+  if (cmd === "node" && /(?:^|\/)baton\.mjs$/i.test(firstArg)) {
+    const args = rest.slice(1);
+    const shown = batonShown(args);
+    return withCount(["baton", ...shown], args.length - shown.length);
+  }
+  if (cmd === "baton" || cmd === "baton.mjs") {
+    const shown = batonShown(rest);
+    return withCount(["baton", ...shown], rest.length - shown.length);
+  }
+  if (cmd === "git") {
+    const shown = gitShown(rest);
+    return withCount([name, ...shown], rest.length - shown.length);
+  }
+  if (cmd === "npm" && rest[0] === "run" && SCRIPT_NAME.test(rest[1] ?? "")) {
+    return withCount([name, "run", rest[1] ?? ""], rest.length - 2);
+  }
+  return withCount([name], rest.length);
+}
+
+/**
+ * A shell command line as command names only (ADR 0023): each simple command shows its
+ * name, plus the subcommand for `git <sub>`, `npm run <script>` and `baton <sub> [task-id]`,
+ * plus `(+N args)`. Arguments never appear, so no secret or path in them reaches STATE.md.
+ */
+export function summarizeShellCommand(command: string): string {
+  const line = command.split(/\r?\n/)[0] ?? "";
+  return shellParts(line)
+    .map((p) => {
+      const s = summarizeShellPart(p.words);
+      if (p.op === "") return s;
+      return p.op === ";" ? `${s};` : `${s} ${p.op}`;
+    })
+    .join(" ")
+    .replace(/ (?:&&|\|\||\||&)$|;$/, "");
+}
+
 /** One redacted, bounded line per tool call, safe to commit in STATE.md. */
 export function summarizeToolUse(
   t: ToolUse,
@@ -409,12 +555,12 @@ export function summarizeToolUse(
   if (PATH_TOOLS.has(t.name)) {
     const p = str(t.input.file_path) ?? str(t.input.notebook_path);
     line = p ? `${t.name} ${bounded(shownPath(p, root, platform), root, platform)}` : t.name;
-  } else if (t.name === "Bash") {
+  } else if (SHELL_SUMMARY_TOOLS.has(t.name)) {
     const cmd = str(t.input.command);
     line =
       cmd === undefined
         ? t.name
-        : `Bash: ${bounded(cmd.split(/\r?\n/)[0] ?? "", root, platform, true)}`;
+        : `${t.name}: ${bounded(summarizeShellCommand(cmd), root, platform)}`;
   } else if (t.name === "Grep" || t.name === "Glob") {
     const pattern = str(t.input.pattern);
     line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern, root, platform, true)}`;

@@ -93,6 +93,23 @@ describe("createDecision", () => {
     expect(r.placeholders).toBe(false);
   });
 
+  it("a non-ASCII title makes a listed record and does not wedge numbering", async () => {
+    const root = makeRepo();
+    const first = await createDecision(root, proposal({ title: "Хранилище задач" }));
+    expect(first.file).toBe(".context/decisions/0003-decision.md");
+    expect((await listDecisions(root)).map((d) => d.number)).toContain(3);
+    const second = await createDecision(root, proposal({ title: "Ещё одно решение" }));
+    expect(second.number).toBe(4);
+    expect(second.file).toBe(".context/decisions/0004-decision.md");
+  });
+
+  it("numbers past a hand-placed non-ASCII file", async () => {
+    const root = makeRepo();
+    writeFileSync(join(root, ".context", "decisions", "0003-хранилище.md"), "");
+    const r = await createDecision(root, proposal());
+    expect(r.number).toBe(4);
+  });
+
   it("accepted needs context and outcome", async () => {
     const root = makeRepo();
     const before = decisionsDir(root);

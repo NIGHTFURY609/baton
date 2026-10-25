@@ -34,12 +34,12 @@ src/
     decide.ts         decision records: create, accept, supersede, list (ADR 0018)
     preflight.ts      decisions and spec sections related to a proposed change (ADR 0018)
     verify.ts         check runner, diff rule, active task (ADR 0019)
-    compile.ts        AGENTS.md and the CLAUDE.md import from rules.md
+    compile.ts        AGENTS.md and the CLAUDE.md import from rules.md (ADR 0022)
     sections.ts       section index over .context/ (ADR 0012)
     drift.ts          freshness from git history, dead references, drift log (ADR 0013)
     verify-doc.ts     verified_at stamping (ADR 0012)
     mission.ts        packet assembly (ADR 0014)
-    handoff.ts        generated STATE.md (ADR 0015)
+    handoff.ts        generated STATE.md (ADR 0023)
     stats.ts          session metrics and snapshots (ADR 0016)
     init.ts, templates.generated.ts  scaffolding from embedded templates (ADR 0017)
     explain/          `baton explain`: target resolution, fact collection, voice templates (ADR 0010)
@@ -48,7 +48,7 @@ src/
       beads.ts        optional adapter over an installed `bd`
       snapshot.ts     read-only task view for mission and handoff
   hooks/
-    entry.ts          fast path for baton hook, skips the commander program (ADR 0015)
+    entry.ts          fast path for baton hook, skips the commander program (ADR 0023)
     io.ts             stdin parsing, per-harness output rendering
     dispatch.ts       event -> handler, fail-open wrapper
     guards.ts         protected targets, edit targets, shell-write and dependency heuristics (ADR 0020)
@@ -67,18 +67,18 @@ templates/context/    what `baton init` scaffolds into a project
 
 | Command | Reads | Writes | Exit codes | Phase |
 |---|---|---|---|---|
-| `init [--harness] [--no-hooks] [--force]` | templates | `.context/`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes`/`.gitignore` lines (Claude hooks ship in the plugin, ADR 0017) | 0, 1, 3 for codex/gemini | 1 |
-| `mission [--budget] [--task] [--format]` | STATE, task store, spec, decisions, git | `.context/.cache/last-packet.*` | 0, 1 | 1 |
-| `handoff [--reason] [--transcript] [--dry-run]` | task store, git status/diff, transcript tail | `.context/STATE.md` (overwrite) | 0, 1 | 1 |
-| `drift [--format] [--fail-on]` | all sections, git | `.context/.cache/drift.jsonl` | 0, 2 on `--fail-on` hit | 1 |
-| `verify-doc <ids...>` | sections | `verified_at` = first 12 chars of HEAD on those sections | 0, 1 | 1 |
-| `stats [--session] [--since] [--format]` | transcripts, drift log | `.context/.cache/stats/` snapshots | 0, 1 | 1 |
-| `decide [title] [--preflight] [--supersedes] [--accept] [--spec]` | decisions, spec, code graph (optional) | new ADR; status of superseded ADR | 0, 2 on conflict in preflight | 2 |
-| `verify <task> [--no-diff]` | task check command, git diff | closes task in the store | 0, 2 on failed check | 2 |
-| `compile [--check]` | `.context/rules.md` | `AGENTS.md`, `CLAUDE.md`, other rule files | 0, 2 on `--check` drift | 2 |
-| `task create\|list\|show\|ready\|blocked\|update\|close\|reopen\|delete\|dep\|comment\|import` | `.context/tasks.jsonl` (via cache) | `.context/tasks.jsonl` | 0, 1, 2 on refused state change (claimed, blocked, cycle) | done |
+| `init [--harness] [--no-hooks] [--force]` | templates | `.context/`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes`/`.gitignore` lines (Claude hooks ship in the plugin, ADR 0017) | 0, 1, 3 for codex/gemini | done |
+| `mission [--budget] [--task] [--format]` | STATE, task store, spec, decisions, git | `.context/.cache/last-packet.*` | 0, 1 | done |
+| `handoff [--reason] [--transcript] [--dry-run]` | task store, git status/diff, transcript tail | `.context/STATE.md` (overwrite) | 0, 1 | done |
+| `drift [--format] [--fail-on]` | all sections, git | `.context/.cache/drift.jsonl` | 0, 2 on `--fail-on` hit | done |
+| `verify-doc <ids...>` | sections | `verified_at` = first 12 chars of HEAD on those sections | 0, 1 | done |
+| `stats [--session] [--since] [--format]` | transcripts, drift log | `.context/.cache/stats/` snapshots | 0, 1 | done |
+| `decide [title] [--preflight] [--supersedes] [--status] [--accept] [--spec] [--paths] [--context] [--considered] [--outcome] [--consequence] [--deciders]` | decisions, spec and the other sections (index), git HEAD | new ADR (exclusive create); status and verified_at of the accepted record and of the record it supersedes (ADR 0018) | 0, 1, 2 when preflight finds a constraint or a status change is refused | done |
+| `verify <task> [--no-diff]` | the task's check: labels, git log --since, git status | closes the task in the store (ADR 0019) | 0, 1, 2 on a failed check or an empty diff, 3 for non-native backends | done |
+| `compile [--check] [--force]` | .context/rules.md | AGENTS.md (generated; a hand-written one only with --force), CLAUDE.md (@AGENTS.md line ensured) (ADR 0022) | 0, 1, 2 on --check drift, over 60 lines or a hand-written AGENTS.md | done |
+| `task create\|list\|show\|ready\|blocked\|update\|close\|reopen\|delete\|dep\|comment\|import` | `.context/tasks.jsonl` (via cache) | `.context/tasks.jsonl` | 0, 1, 2 on refused state change (claimed, blocked, cycle, closing a checked task without --force; ADR 0019) | done |
 | `remember \| recall \| forget \| memories` | `.context/memories.jsonl` | `.context/memories.jsonl` | 0, 1 | done |
-| `hook <event> [--harness]` | stdin JSON | per handler | 0 always, except structured denies | 1–2 |
+| `hook <event> [--harness]` | stdin JSON | per handler; .context/.cache/guard.jsonl and touched.jsonl | 0 always; structured deny (PreToolUse) and block (Stop) | done |
 | `explain <thing> [--as] [--format]` · `explain -c/-p/-s/--force` · `--delete` · `--templates` | `.context/`, `docs/`, `package.json`, git file list, templates | `.context/explain/`, `~/.baton/explain/` (create/delete only) | 0, 1, 2 on tie or refused template change | side track |
 | `mcp` | — | — (delegates to core) | — | 3 |
 
@@ -99,7 +99,7 @@ Claude Code wiring ships in `plugin/hooks/hooks.json` (exec form: `node ${CLAUDE
 
 ## Performance budget
 
-Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold-time measurement, platform not recorded: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11, Node 22.16 (implementation notes §1): bare `node -e 0` 53 ms, `baton --version` through the full bundle 142 ms, and the no-op `hook pre-tool-use` 144 ms before the fast path existed; with it, `npm run smoke:hooks` measures a PreToolUse median of about 110 ms. `baton hook` therefore bypasses the commander program (ADR 0015). `hook post-tool-use` shares the < 150 ms budget. `hook stop` does nothing unless `verify.onStop` is set; then it runs the active task's check (up to 540 s, ADR 0019).
+Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold-time measurement, platform not recorded: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11, Node 22.16 (implementation notes §1): bare `node -e 0` 53 ms, `baton --version` through the full bundle 142 ms, and the no-op `hook pre-tool-use` 144 ms before the fast path existed; with it, `npm run smoke:hooks` measures a PreToolUse median of about 110 ms. `baton hook` therefore bypasses the commander program (ADR 0023). `hook post-tool-use` shares the < 150 ms budget. `hook stop` does nothing unless `verify.onStop` is set; then it runs the active task's check (up to 540 s, ADR 0019).
 
 ## Integrations (consume, do not replace)
 

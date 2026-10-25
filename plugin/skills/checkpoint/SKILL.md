@@ -9,7 +9,7 @@ A checkpoint turns what just happened into durable, structured state. It never w
 
 ## Steps
 
-1. For each task you finished this session, run `baton verify <task-id>`. Until Phase 2, `verify` exits 3. In that case, run the task's check yourself (`baton task show <task-id>` lists it as the `check:` label). Only if it exits 0, close the task with `baton task close <task-id> --reason "check passed: <command>"`. If the check fails, leave the task open and say why. Never mark a task done any other way.
+1. For each task you finished this session, run `baton verify <task-id>`. It runs the task's `check:` commands and closes the task only if they pass on a non-empty diff since the task was started. Exit 2 means the check failed or nothing changed: leave the task open and say why. Exit 1 saying `no check: label` means the task has no check: ask the user for one, add it with `baton task update <task-id> --add-labels "check:<command>"`, then verify. Use `--no-diff` only for a task that by design changes no files (an investigation), and say so. Never mark a task done any other way.
 2. Gotchas: for each non-obvious thing learned (a tool quirk, an environment fact, a pattern that worked), append a short bullet to the matching `.context/knowledge/<topic>.md`. Create the topic file with frontmatter (`id`, `kind: knowledge`, `verified_at: null`, `source_paths`) if it does not exist. One fact per bullet; no narrative.
 3. If a spec section you relied on turned out wrong, do not edit it silently: tell the user, and propose a `baton decide` record if the change is load-bearing.
 4. Run `baton handoff --reason manual` to regenerate `.context/STATE.md`.

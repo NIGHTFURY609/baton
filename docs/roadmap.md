@@ -4,7 +4,7 @@ Four phases, about 13 weeks, each gated on a measured result. Nothing ships befo
 
 ![roadmap](research/media/roadmap.png)
 
-This file lists phase deliverables and gates only. Work items live in the task store (`baton task ready`): Phase 0 is epic `bt-kmz`, Phase 1 is epic `bt-s9g`. Done so far: the scaffold, the native task store (ADR 0009) and the Phase 1 deliverables below, built and reviewed; the Phase 1 gate (measured start tokens and corrections) is still to be run. Still stubbed and exiting 3: `decide`, `verify`, `compile` (Phase 2), `mcp` and `init --harness codex|gemini` (Phase 3).
+This file lists phase deliverables and gates only. Work items live in the task store (`baton task ready`): Phase 0 is epic `bt-kmz`, Phase 1 is epic `bt-s9g`. Done so far: scaffold, the native task store (ADR 0009), the Phase 1 MVP and the Phase 2 gates. Both phases' gates are dogfood measurements still to be taken. Still stubbed and exiting 3: `mcp` and `init --harness codex|gemini` (Phase 3).
 
 ## Phase 0 · Dogfood (2 weeks) — gate: baseline captured
 
@@ -25,6 +25,8 @@ Uses existing tools only; costs nothing to build. Record tokens at session start
 | Task store in the packet | Ready tasks + their `spec:` sections in `mission`; `handoff` reads in-progress and recently closed tasks; memories included under budget |
 
 ## Phase 2 · Gates (3 weeks) — gate: no direct state edits in 10 sessions
+
+Built: epic `bt-vyr` (plan: [phase 2](superpowers/plans/2026-10-21-phase2-gates.md); ADRs 0018–0022). The gate is measured by hand: `bt-vyr.18`.
 
 - `decide` with MADR records, supersede chains, spec-conflict flags, `--preflight`
 - `verify` runs check commands; closes tasks only on exit 0 (+ non-empty diff by default)
@@ -48,5 +50,5 @@ Uses existing tools only; costs nothing to build. Record tokens at session start
 1. What N (commits) marks a section stale, per kind? Defaults are guesses in `config.yaml`.
 2. Does the packet need spec sections at all, or do ADR summaries plus task descriptions carry enough intent?
 3. Is `search` in the MCP adapter worth its tool-definition tokens, or does Grep on `.context/` suffice?
-4. Should `verify` require a non-empty diff by default?
+4. Should `verify` require a non-empty diff by default? Resolved: yes by default; `--no-diff` opts out (ADR 0019).
 5. How do skills call the CLI: global install, `npx baton-ctx`, or a plugin `bin/` shim (which claude.ai/Cowork will not install)? Resolved: global install (ADR 0011).

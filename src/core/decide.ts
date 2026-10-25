@@ -182,7 +182,8 @@ export async function createDecision(
   const dir = contextPath(root, DECISIONS);
   const n = await nextAdrNumber(dir);
   const name = adrFileName(n, title);
-  if (name === `${pad4(n)}-.md`) throw new BatonError("title has no letters or digits");
+  if (!/[\p{Letter}\p{Number}]/u.test(title))
+    throw new BatonError("title has no letters or digits");
   const verifiedAt = status === "accepted" ? ((await headSha(root))?.slice(0, 12) ?? null) : null;
   const date = localDate(input.now ?? new Date());
 

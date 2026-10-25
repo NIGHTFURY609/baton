@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConfigSchema, loadConfig } from "../src/core/config.js";
 import { BatonError } from "../src/core/errors.js";
 import { changedFilesSince } from "../src/core/git.js";
@@ -258,6 +258,80 @@ describe("verifyTask", () => {
       expect(out.passed).toHaveLength(1);
     }
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
+  });
+
+  it("shares one total deadline across check labels", { retry: 2 }, async () => {
+    const root = makeRepo();
+    const SLEEP1 = 'node -e "setTimeout(()=>{},1500)"';
+    const SLEEP5 = 'node -e "setTimeout(()=>{},8000)"';
+    const t = await claimed(root, [`check:${SLEEP1}`, `check:${SLEEP5}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const started = Date.now();
+    const out = await verifyTask(root, config, t.id, {
+      requireDiff: true,
+      close: true,
+      timeoutMs: 20_000,
+      totalTimeoutMs: 3500,
+    });
+    expect(out.status).toBe("failed");
+    if (out.status === "failed") {
+      expect(out.run.command).toBe(SLEEP5);
+      expect(out.run.timedOut).toBe(true);
+    }
+    expect(Date.now() - started).toBeLessThan(7500);
+    expect((await readTask(root, t.id))?.status).toBe("in_progress");
+  });
+
+  it("reports a check timed out without spawning it once the total is spent", async () => {
+    const root = makeRepo();
+    const marker = join(root, "spawned.txt");
+    const SLEEP = 'node -e "setTimeout(()=>{},800)"';
+    const SECOND = `node -e "var v=1;require('fs').writeFileSync('spawned.txt','x')"`;
+    const t = await claimed(root, [`check:${SLEEP}`, `check:${SECOND}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, {
+      requireDiff: true,
+      close: false,
+      totalTimeoutMs: 1,
+    });
+    expect(out.status).toBe("failed");
+    if (out.status === "failed") expect(out.run.timedOut).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("applies no total deadline when the option is absent", async () => {
+    const root = makeRepo();
+    const t = await claimed(root, [`check:${PASS}`, `check:${PASS}`]);
+    writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, { requireDiff: true, close: false });
+    expect(out.status).toBe("passed");
+  });
+
+  it("a reopened, re-claimed task does not verify against its earlier work", async () => {
+    const root = makeRepo(CONTEXT_FIXTURE, { git: false });
+    runGit(root, "-c", "init.defaultBranch=main", "init", "-q");
+    let t: Awaited<ReturnType<typeof claimed>>;
+    try {
+      process.env.GIT_COMMITTER_DATE = "2025-12-01T00:00:00+00:00";
+      commitAll(root, "base");
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+      t = await claimed(root, [`check:${PASS}`]);
+      process.env.GIT_COMMITTER_DATE = "2026-01-01T00:10:00+00:00";
+      writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+      commitAll(root, "first round");
+      await withService(root, "tester", (s) => s.close(t.id, "done", true));
+      await withService(root, "tester", (s) => s.reopen(t.id));
+    } finally {
+      vi.useRealTimers();
+      delete process.env.GIT_COMMITTER_DATE;
+    }
+    await withService(root, "tester", (s) => s.claim(t.id));
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, { requireDiff: true, close: true });
+    expect(out.status).toBe("no-diff");
   });
 
   it("reports already-closed without running anything", async () => {

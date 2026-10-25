@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-21
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "3bbe17408dd2"
 source_paths: [src/core/drift.ts, src/hooks/post-tool-use.ts]
 spec_sections: [freshness, hooks]
 ---

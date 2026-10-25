@@ -13,7 +13,7 @@ interface HandoffCliOptions {
  * Regenerate .context/STATE.md from structured sources only: task store,
  * `git status`, `git diff --stat`, and the last tool calls in the transcript.
  * Overwrites, never appends, and writes nothing when only timestamps changed
- * (ADR 0015).
+ * (ADR 0023).
  */
 export function registerHandoff(program: Command): void {
   program

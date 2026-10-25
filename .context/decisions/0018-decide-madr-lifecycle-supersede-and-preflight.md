@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-21
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "3bbe17408dd2"
 source_paths: [src/core/decisions.ts, src/core/decide.ts, src/core/preflight.ts, src/commands/decide.ts]
 spec_sections: [decisions]
 ---

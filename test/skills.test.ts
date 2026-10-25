@@ -22,15 +22,23 @@ describe("skill bodies", () => {
     });
   }
 
-  it("init-spec falls back to a task while decide exits 3", () => {
+  it("init-spec records choices through decide", () => {
     const text = body("init-spec");
-    expect(text).toContain("baton task create");
-    expect(text).toContain("exits 3");
+    expect(text).toContain("baton decide");
+    expect(text).toContain("--status accepted");
+    expect(text).not.toContain("exits 3");
   });
 
-  it("checkpoint falls back to task close while verify exits 3", () => {
+  it("checkpoint closes tasks through verify", () => {
     const text = body("checkpoint");
-    expect(text).toContain("baton task close");
-    expect(text).toContain("exits 3");
+    expect(text).toContain("baton verify");
+    expect(text).not.toContain("exits 3");
+  });
+
+  it("decide documents preflight, accept and the status line", () => {
+    const text = body("decide");
+    expect(text).toContain("--preflight");
+    expect(text).toContain("--accept");
+    expect(text).toContain("status line");
   });
 });

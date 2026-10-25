@@ -20,3 +20,13 @@ Short list for whoever touches hooks. Sources and verification status: docs/rese
 - PreToolUse `deny` reasons reach the model; `ask` reasons reach only the user. Deny, never ask, when the model must change course.
 - Stop: `decision: "block"` keeps Claude working. Skip when `stop_hook_active` is true; Claude Code ends the turn after 8 blocks in a row anyway.
 - Windows sessions have a `PowerShell` tool as well as `Bash`; guard both.
+- The shell guard (`src/hooks/guards.ts`) reads the command text and does not parse quotes. Known gaps it leaves open, most likely first for a cooperative agent:
+  - a `cd .context` in an earlier call, then a relative `rm STATE.md` (the shell's cwd persists between calls);
+  - formatters given explicit paths (`prettier --write ".context/**/*.md"`);
+  - `find .context/.cache -delete`;
+  - over-deny: a `sed` regex such as `.c[…]` reads as a glob mention, and so does a mention of another repo's `.context/`;
+  - `>|`, `patch X < d`, `cp -t .context/ x`, `cp -r backup/.context .`, `git stash push -- …` and `git apply`;
+  - script APIs it does not name: pathlib `write_text`, `WriteAllTextAsync`, `[IO.File]::Create`, `os.removedirs`;
+  - path spellings: MSYS `/n/...`, 8.3 short names (`CONTEX~1`), UNC admin shares;
+  - quote splicing and globs: `.con""text`, `rm -rf .*`, `.?ontext`, `.[c]ontext`, `*context`.
+  Formatters are the likeliest real-world hit: excluding `.context/` from `.prettierignore` and the Biome ignores (a candidate for `baton init` to add) closes that gap.

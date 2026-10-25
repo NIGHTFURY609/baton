@@ -20,8 +20,6 @@ export interface HookContext {
 
 type Handler = (input: HookInput, ctx: HookContext) => Promise<HookResult>;
 
-const noop: Handler = async () => ({ kind: "noop" });
-
 export const PRE_COMPACT_TAIL_BYTES = 262_144;
 export const SESSION_END_TAIL_BYTES = 65_536;
 
@@ -61,7 +59,7 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
 
 /**
  * Event -> handler. Core modules load with dynamic import(), so a no-op hook
- * never pays for them. Wiring (docs/design/architecture.md, ADR 0015):
+ * never pays for them. Wiring (docs/design/architecture.md, ADR 0023):
  *
  * - session-start  -> mission packet as additionalContext; matcher includes
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
@@ -69,8 +67,9 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
  * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0020);
  *                     preflight context on dependency/migration files          [Phase 2]
- * - post-tool-use  -> mark sections whose source_paths were touched as aging   [Phase 2, no-op now]
- * - stop           -> opt-in: verify the active task before stopping           [Phase 2, no-op now]
+ * - post-tool-use  -> notice the sections whose source_paths an edit touched, once per
+ *                     session (post-tool-use.ts)                              [Phase 2]
+ * - stop           -> opt-in: verify the active task before stopping           [Phase 2]
  */
 export const HANDLERS: Record<HookEvent, Handler> = {
   "session-start": sessionStart,
@@ -83,8 +82,9 @@ export const HANDLERS: Record<HookEvent, Handler> = {
     SESSION_END_TAIL_BYTES,
   ),
   "pre-tool-use": async (input, ctx) => (await import("./pre-tool-use.js")).preToolUse(input, ctx),
-  "post-tool-use": noop,
-  stop: noop,
+  "post-tool-use": async (input, ctx) =>
+    (await import("./post-tool-use.js")).postToolUse(input, ctx),
+  stop: async (input, ctx) => (await import("./stop.js")).stopHook(input, ctx),
 };
 
 /**

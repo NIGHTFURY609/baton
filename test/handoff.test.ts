@@ -259,6 +259,31 @@ describe("gatherHandoff and runHandoff", () => {
     expect(data.snapshot.inProgress[0]?.title).toBe("Wire hooks");
   });
 
+  it("writes shell commands to STATE.md as names only", async () => {
+    const { root, transcriptPath } = await gitFixture();
+    writeFileSync(
+      transcriptPath,
+      toJsonl([
+        toolUse("s1", "Bash", { command: "mysql -pW@ter123 db" }),
+        toolUse("s2", "Bash", { command: "curl -u user:pass https://x" }),
+        toolUse("s3", "PowerShell", { command: '"x" | ConvertTo-SecureString' }),
+        toolUse("s4", "Bash", { command: "zip -r a.zip f -P secret" }),
+      ]),
+    );
+    const { text } = await runHandoff(root, await loadConfig(root), {
+      reason: "manual",
+      transcriptPath,
+      dryRun: true,
+    });
+    expect(text).toContain("- Bash: mysql (+2 args)");
+    expect(text).toContain("- Bash: curl (+3 args)");
+    expect(text).toContain("- PowerShell: (expression) | ConvertTo-SecureString");
+    expect(text).toContain("- Bash: zip (+5 args)");
+    for (const secret of ["W@ter123", "user:pass", '"x"', "secret", "a.zip"]) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
   it("writes, then is idempotent", async () => {
     const { root, transcriptPath } = await gitFixture();
     const config = await loadConfig(root);
