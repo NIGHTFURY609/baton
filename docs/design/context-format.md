@@ -28,9 +28,9 @@ The task store is the sixth document (ADR 0009): `tasks.jsonl` is the committed 
 |---|---|---|---|
 | rules.md → AGENTS.md | rule | Edit rules.md; AGENTS.md is regenerated | `compile --check` in CI (ADR 0022) |
 | spec.md | intent | Rarely changes; a change to a load-bearing section needs an ADR | `decide`, `/init-spec` |
-| decisions/ | decision | Created by baton decide; append-only: only a proposed record's body is edited by hand; status changes through decide --accept or a superseding record (ADR 0018) | PreToolUse deny (ADR 0025) |
-| tasks.jsonl, memories.jsonl | — | Only through `baton task` / `baton remember` | PreToolUse deny (ADR 0025); tasks close through baton verify (ADR 0019) |
-| STATE.md | state | Overwritten at PreCompact / SessionEnd, never appended | PreToolUse deny (ADR 0025) + `handoff` |
+| decisions/ | decision | Created by baton decide; append-only: only a proposed record's body is edited by hand; status changes through decide --accept or a superseding record (ADR 0018) | PreToolUse deny (ADR 0026) |
+| tasks.jsonl, memories.jsonl | — | Only through `baton task` / `baton remember` | PreToolUse deny (ADR 0026); tasks close through baton verify (ADR 0019) |
+| STATE.md | state | Overwritten at PreCompact / SessionEnd, never appended | PreToolUse deny (ADR 0026) + `handoff` |
 | knowledge/ | knowledge | Append, then periodic compaction | `/checkpoint`, `drift` (orphans, size) |
 
 ## Section provenance

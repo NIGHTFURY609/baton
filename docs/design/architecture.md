@@ -51,8 +51,8 @@ src/
     entry.ts          fast path for baton hook, skips the commander program (ADR 0024)
     io.ts             stdin parsing, per-harness output rendering
     dispatch.ts       event -> handler, fail-open wrapper
-    guards.ts         protected targets, edit targets, shell-write and dependency heuristics (ADR 0025)
-    pre-tool-use.ts   protected-state denies, preflight context (ADR 0025)
+    guards.ts         protected targets, edit targets, shell-write and dependency heuristics (ADR 0026)
+    pre-tool-use.ts   protected-state denies, preflight context (ADR 0026)
     post-tool-use.ts  notices for sections an edit touched (ADR 0021)
     stop.ts           opt-in check of the active task (ADR 0019)
   mcp/server.ts       four-tool MCP adapter (lazy-loaded chunk)
@@ -91,7 +91,7 @@ Exit codes: `0` ok · `1` error · `2` check failed / blocked · `3` not impleme
 | `session-start` | SessionStart `startup\|resume\|clear\|compact` | SessionStart | SessionStart | inject `mission` output as `additionalContext` (1) |
 | `pre-compact` | PreCompact | PreCompact | PreCompress | full `handoff` (1) |
 | `session-end` | SessionEnd (timeout 10 s) | SessionEnd (≤ 3 s) | SessionEnd | fast deterministic `handoff` (1) |
-| `pre-tool-use` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|PowerShell` | PreToolUse `Bash\|apply_patch` | BeforeTool `write_file\|replace\|run_shell_command` | deny protected-state edits; preflight context for dependency and migration files (2, ADR 0025) |
+| `pre-tool-use` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|PowerShell` | PreToolUse `Bash\|apply_patch` | BeforeTool `write_file\|replace\|run_shell_command` | deny protected-state edits; preflight context for dependency and migration files (2, ADR 0026) |
 | `post-tool-use` | PostToolUse `Edit\|Write\|MultiEdit` | PostToolUse | AfterTool | notice the sections whose source_paths an edit touched; uncommitted changes age them (2, ADR 0021) |
 | `stop` | Stop (timeout 600 s; acts only with verify.onStop) | Stop | AfterAgent | run the active task's check; block the stop when it fails (2, ADR 0019) |
 
