@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { promisify } from "node:util";
+import { describe, expect, it, vi } from "vitest";
 import { PACKET_HEADER } from "../src/core/budget.js";
 import { loadConfig } from "../src/core/config.js";
 import { evaluateFreshness } from "../src/core/drift.js";
@@ -18,6 +19,25 @@ import {
   stampFixture,
   withService,
 } from "./helpers/repo.js";
+
+// Counts every child process spawned through node:child_process.execFile (git() and beads
+// both use it), delegating to the real implementation.
+const spawned = vi.hoisted(() => ({ count: 0 }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const real = actual.execFile;
+  const counted = ((...args: unknown[]) => {
+    spawned.count++;
+    return (real as (...a: unknown[]) => unknown)(...args);
+  }) as unknown as typeof actual.execFile;
+  (counted as unknown as Record<symbol, unknown>)[promisify.custom] = (...args: unknown[]) => {
+    spawned.count++;
+    return (real as unknown as Record<symbol, (...a: unknown[]) => unknown>)[promisify.custom]?.(
+      ...args,
+    );
+  };
+  return { ...actual, execFile: counted };
+});
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");
 
@@ -175,11 +195,20 @@ describe("dogfood: this repo's packet", () => {
     }
   });
 
-  it("builds a second packet quickly", async () => {
+  // Guards against subprocess fan-out in buildMission (e.g. one git call per section): process
+  // spawn is what makes a build slow on Windows. Measured: 14 per build; pinned with a margin of 2. Raise it only
+  // on purpose.
+  const MAX_SPAWNS_PER_BUILD = 16;
+
+  it(`builds the packet within ${MAX_SPAWNS_PER_BUILD} subprocess calls, the same on every build`, async () => {
     const config = await loadConfig(REPO_ROOT);
-    await buildMission(REPO_ROOT, config);
-    const t0 = performance.now();
-    await buildMission(REPO_ROOT, config);
-    expect(performance.now() - t0).toBeLessThan(3000);
+    const counts: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const before = spawned.count;
+      await buildMission(REPO_ROOT, config);
+      counts.push(spawned.count - before);
+    }
+    expect(counts[0]).toBeLessThanOrEqual(MAX_SPAWNS_PER_BUILD);
+    expect(counts[1]).toBe(counts[0]);
   });
 });
