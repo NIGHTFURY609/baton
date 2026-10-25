@@ -1,7 +1,7 @@
 ---
 id: adr-0020
 kind: decision
-status: accepted
+status: "superseded by ADR-0025"
 date: 2026-10-21
 decision-makers: [maintainer]
 verified_at: "3bbe17408dd2"

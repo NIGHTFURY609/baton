@@ -159,7 +159,7 @@ function tokenMention(token: string): string | null {
   return m ? normMention(m[1] ?? "") : null;
 }
 
-const WRAPPERS = new Set(["sudo", "env", "command", "nohup", "time"]);
+const WRAPPERS = new Set(["sudo", "env", "command", "nohup", "time", "{", "!"]);
 
 function wordsOf(seg: string): string[] {
   return seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
@@ -229,35 +229,140 @@ const DATA_ARG_COMMANDS = new Set([
   "baton",
 ]);
 const WRITE_API_RE =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|file_put_contents|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bf?open\s*\([^)]*['"][wax][bt+]{0,2}['"]/i;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|file_put_contents|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bf?open\s*\([^)]{0,512}['"][wax][bt+]{0,2}['"]/i;
+
+/** A write command or a redirection anywhere in a text, for the depth-cap fail-safe. */
+const WRITE_CMD_RE = new RegExp(
+  String.raw`(?:^|[\s;|&(){}\x60"'/])(?:${[
+    ...ALL_MENTIONS,
+    ...DEST_ONLY,
+    ...NESTED_SHELLS,
+    ...SCRIPT_HOSTS,
+    "sed",
+    "git",
+    "rg",
+    "find",
+    "xargs",
+  ].join("|")})(?:\.exe|\.cmd)?(?=$|[\s;|&(){}\x60"'])|>`,
+  "i",
+);
+
+/** How deep substitutions, nested shells and git exec forms are followed. */
+const MAX_DEPTH = 4;
+/** Longer commands are not scanned: every protected mention in them counts as written. */
+const MAX_LENGTH = 16_384;
+
+/** Which shell reads the command: a backslash escapes `$` and backticks only in bash. */
+export type ShellDialect = "posix" | "powershell";
+
+/** Commands that read a heredoc as data, so a quoted heredoc body fed to them is literal. */
+const HEREDOC_DATA = new Set([
+  ...DATA_ARG_COMMANDS,
+  "cat",
+  "head",
+  "tail",
+  "wc",
+  "sort",
+  "less",
+  "more",
+]);
 
 /**
- * Bodies of the `$(…)` and backtick substitutions in a command, outside single quotes
- * (where the shell runs them). An unclosed substitution runs to the end of the text.
+ * Drop the body of each quoted heredoc (`<<'X'`, `<<"X"`, `<<\X`, `<<-'X'`) whose command
+ * reads it as data: bash expands nothing in it. A heredoc fed to a script host, a shell or
+ * an unknown command is code and stays.
+ */
+function blankQuotedHeredocs(text: string): string {
+  const re = /<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|\\([^\s;|&<>()]+))/g;
+  let out = "";
+  let pos = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    const head = text.slice(pos, m.index);
+    const from = Math.max(...[";", "|", "&", "\n", "(", "`"].map((c) => head.lastIndexOf(c)));
+    const words = wordsOf(head.slice(from + 1));
+    const ni = nameIndex(words);
+    if (ni < 0 || !HEREDOC_DATA.has(commandName(words[ni] ?? ""))) continue;
+    const delim = m[2] ?? m[3] ?? m[4] ?? "";
+    const start = text.indexOf("\n", re.lastIndex);
+    if (start < 0) continue;
+    let end = text.length;
+    for (let i = start + 1; i < text.length; ) {
+      const nl = text.indexOf("\n", i);
+      const line = text.slice(i, nl < 0 ? text.length : nl).replace(/\r$/, "");
+      if ((m[1] ? line.replace(/^\t+/, "") : line) === delim) {
+        end = i;
+        break;
+      }
+      if (nl < 0) break;
+      i = nl + 1;
+    }
+    out += text.slice(pos, start + 1);
+    pos = end;
+    re.lastIndex = Math.max(end, re.lastIndex);
+  }
+  return out + text.slice(pos);
+}
+
+/** Bash only: `\$` and `` \` `` are literal; `\\` is an escaped backslash. */
+const neutraliseEscapes = (text: string): string =>
+  text.replace(/\\[\\$`]/g, (m) => (m === "\\\\" ? m : "\\_"));
+
+/** A quote after `\`, or after the `/` a backslash is normalised to, is escaped. */
+const escaped = (text: string, i: number): boolean => text[i - 1] === "\\" || text[i - 1] === "/";
+
+/** Index just past the `)` that closes the `(` at `open`, or the text length when unclosed. */
+function closeParen(text: string, open: number): number {
+  let depth = 1;
+  let j = open + 1;
+  for (; j < text.length && depth > 0; j++) {
+    if (text[j] === "(") depth++;
+    else if (text[j] === ")") depth--;
+  }
+  return j;
+}
+
+/**
+ * Bodies of the code a command runs inline, outside single quotes: `$(…)`, backticks,
+ * process substitution `<(…)` and `>(…)`, PowerShell `@(…)`, and a `( … )` group or
+ * subexpression that starts a word outside quotes. A quote after `\` (or the `/` it is
+ * normalised to) opens nothing, and `$'…'` is read as unquoted. An unclosed body runs to
+ * the end of the text.
  */
 function substitutions(text: string): string[] {
   const out: string[] = [];
-  let quote: "'" | '"' | null = null;
+  let quote: "'" | '"' | "$'" | null = null;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (quote === "'") {
       if (ch === "'") quote = null;
+      continue;
+    }
+    if (quote === "$'") {
+      if (ch === "'" && !escaped(text, i)) {
+        quote = null;
+        continue;
+      }
     } else if (ch === "'" && quote === null) {
-      quote = "'";
+      if (text[i - 1] === "$") quote = "$'";
+      else if (!escaped(text, i)) quote = "'";
+      continue;
     } else if (ch === '"') {
-      quote = quote === '"' ? null : '"';
-    } else if (ch === "`") {
+      if (quote === null) quote = '"';
+      else if (!escaped(text, i)) quote = null;
+      continue;
+    }
+    const next = text[i + 1];
+    if (ch === "`") {
       const end = text.indexOf("`", i + 1);
       out.push(text.slice(i + 1, end < 0 ? text.length : end));
       i = end < 0 ? text.length : end;
-    } else if (ch === "$" && text[i + 1] === "(") {
-      let depth = 1;
-      let j = i + 2;
-      for (; j < text.length && depth > 0; j++) {
-        if (text[j] === "(") depth++;
-        else if (text[j] === ")") depth--;
-      }
-      out.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+    } else if (next === "(" && (ch === "$" || ch === "<" || ch === ">" || ch === "@")) {
+      const j = closeParen(text, i + 1);
+      out.push(text.slice(i + 2, text[j - 1] === ")" ? j - 1 : j));
+      i = j - 1;
+    } else if (ch === "(" && quote !== '"' && (i === 0 || /[\s;|&(=,{]/.test(text[i - 1] ?? ""))) {
+      const j = closeParen(text, i);
+      out.push(text.slice(i + 1, text[j - 1] === ")" ? j - 1 : j));
       i = j - 1;
     }
   }
@@ -268,16 +373,21 @@ function substitutions(text: string): string[] {
 function gitNestedCommands(seg: string, rest: string[], sub: string | null): string[] {
   const out: string[] = [];
   const alias =
-    /(?:^|\s)-c\s+(?:'alias\.[^\s=']+=!([^']*)'?|"alias\.[^\s="]+=!([^"]*)"?|alias\.[^\s=]+=(?:'!([^']*)'?|"!([^"]*)"?|!(\S*)))/gi;
-  for (const m of seg.matchAll(alias)) out.push(m.slice(1).find((g) => g !== undefined) ?? "");
+    /(?:^|\s)-c\s+(?:'alias\.[^\s=']+=!([^']*)'?|"alias\.[^\s="]+=!([^"]*)"?|alias\.[^\s=]+=(?:'!([^']*)'?|"!([^"]*)"?|!((?:\/ |\S)*)))/gi;
+  for (const m of seg.matchAll(alias)) {
+    const body = m.slice(1).find((g) => g !== undefined) ?? "";
+    // Unquoted, a `\ ` (normalised to `/ `) keeps the alias in one word.
+    out.push(m[5] === undefined ? body : body.replace(/\/ /g, " "));
+  }
   if (sub === "rebase") {
-    for (const m of seg.matchAll(/(?:^|\s)(?:--exec[=\s]|-x)\s*("[^"]*"?|'[^']*'?|\S+)/g)) {
-      out.push(unquote(m[1] ?? ""));
-    }
+    const exec =
+      /(?:^|\s)(?:--e(?:x(?:e(?:c)?)?)?(?:=|\s+)|-[a-zA-Z]*x\s*)("[^"]*"?|'[^']*'?|\S+)/g;
+    for (const m of seg.matchAll(exec)) out.push(unquote(m[1] ?? ""));
   } else if (sub === "bisect" || sub === "submodule") {
     const at = rest.findIndex((w) => w.toLowerCase() === (sub === "bisect" ? "run" : "foreach"));
     if (at >= 0) {
-      const tail = rest.slice(at + 1).filter((w, i) => !(i === 0 && w === "--recursive"));
+      const tail = rest.slice(at + 1);
+      while (["-q", "--quiet", "--recursive"].includes(tail[0] ?? "")) tail.shift();
       out.push(unquote(tail.join(" ")));
     }
   }
@@ -328,7 +438,14 @@ function destinationOf(rest: string[]): string | null {
   return null;
 }
 
-function segmentWrites(seg: string, out: string[]): void {
+interface ScanCtx {
+  dialect: ShellDialect;
+  depth: number;
+  /** Bodies already followed for the whole command at this depth. */
+  seen: Set<string>;
+}
+
+function segmentWrites(seg: string, out: string[], ctx: ScanCtx): void {
   for (const m of seg.matchAll(/(^|[^<>=-])(>>?)\s*("[^"]*"|'[^']*'|[^\s;|&<>()]+)/g)) {
     const hit = tokenMention(m[3] ?? "");
     if (hit) out.push(hit);
@@ -339,9 +456,13 @@ function segmentWrites(seg: string, out: string[]): void {
   const name = commandName(words[ni] ?? "");
   const rest = words.slice(ni + 1);
   const mentions = mentionsIn(seg);
+  const bodies = substitutions(seg);
+  for (const b of bodies) {
+    if (!ctx.seen.has(b.trim())) out.push(...targetsAt(b, ctx.dialect, ctx.depth + 1));
+  }
   if (mentions.length > 0) {
     // A substitution, a git exec form or `rg --pre` runs code even in a data-argument command.
-    let runsCode = substitutions(seg).length > 0;
+    let runsCode = bodies.length > 0;
     if (DEST_ONLY.has(name)) {
       const dest = destinationOf(rest);
       const hit = dest === null ? null : tokenMention(dest);
@@ -359,7 +480,7 @@ function segmentWrites(seg: string, out: string[]): void {
       }
       const nested = gitNestedCommands(seg, rest, sub);
       if (nested.length > 0) runsCode = true;
-      for (const n of nested) out.push(...shellWriteTargets(n));
+      for (const n of nested) out.push(...targetsAt(n, "posix", ctx.depth + 1));
     } else if (name === "rg" && rgRunsPre(rest)) {
       out.push(...mentions);
     } else if (ALL_MENTIONS.has(name)) {
@@ -369,16 +490,53 @@ function segmentWrites(seg: string, out: string[]): void {
   }
   if (NESTED_SHELLS.has(name)) {
     const at = rest.findIndex((w) => ["-c", "/c", "-command"].includes(w.toLowerCase()));
-    if (at >= 0) out.push(...shellWriteTargets(unquote(rest.slice(at + 1).join(" "))));
+    if (at >= 0) {
+      const dialect = name === "pwsh" || name === "powershell" ? "powershell" : "posix";
+      out.push(...targetsAt(unquote(rest.slice(at + 1).join(" ")), dialect, ctx.depth + 1));
+    }
   }
 }
 
-/** Protected mentions a shell command writes, normalised, deduped, in order. */
-export function shellWriteTargets(command: string): string[] {
+/** Every protected mention a text may name, found without the (quadratic) mention regex. */
+function capMentions(text: string): string[] {
+  const lc = text.toLowerCase().replace(/\\/g, "/");
   const out: string[] = [];
-  for (const seg of shellSegments(command)) segmentWrites(seg, out);
-  for (const body of substitutions(command)) out.push(...shellWriteTargets(body));
+  if (lc.includes(".context")) {
+    if (lc.includes("state.md")) out.push(".context/STATE.md");
+    if (lc.includes("tasks.jsonl")) out.push(".context/tasks.jsonl");
+    if (lc.includes("memories.jsonl")) out.push(".context/memories.jsonl");
+    if (lc.includes(".context/.cache")) out.push(".context/.cache");
+    if (lc.includes(".context/decisions")) out.push(".context/decisions");
+    if (out.length === 0) out.push(".context");
+  } else if (/\.c(?:o(?:n(?:t(?:e(?:x(?:t)?)?)?)?)?)?[*?[{]/.test(lc)) {
+    out.push(".context");
+  }
+  if (lc.includes(".beads")) out.push(".beads");
+  return out;
+}
+
+function targetsAt(command: string, dialect: ShellDialect, depth: number): string[] {
+  // Fail safe past either cap: every protected mention counts as written.
+  if (command.length > MAX_LENGTH) return capMentions(command);
+  if (depth > MAX_DEPTH) {
+    return WRITE_API_RE.test(command) || WRITE_CMD_RE.test(command) ? mentionsIn(command) : [];
+  }
+  const text = dialect === "posix" ? neutraliseEscapes(blankQuotedHeredocs(command)) : command;
+  const bodies = substitutions(text);
+  const ctx: ScanCtx = {
+    dialect,
+    depth,
+    seen: new Set(bodies.map((b) => b.replace(/\\/g, "/").trim())),
+  };
+  const out: string[] = [];
+  for (const seg of shellSegments(text)) segmentWrites(seg, out, ctx);
+  for (const body of bodies) out.push(...targetsAt(body, dialect, depth + 1));
   return [...new Set(out)];
+}
+
+/** Protected mentions a shell command writes, normalised, deduped, in order. */
+export function shellWriteTargets(command: string, dialect: ShellDialect = "posix"): string[] {
+  return targetsAt(command, dialect, 0);
 }
 
 /** Shell-side rule for a protected mention. */
@@ -561,7 +719,7 @@ export function checkToolCall(
 ): Denial | null {
   const cmd = shellCommandOf(tool, input);
   if (cmd !== null) {
-    const m = shellWriteTargets(cmd)[0];
+    const m = shellWriteTargets(cmd, tool === "PowerShell" ? "powershell" : "posix")[0];
     if (m === undefined) return null;
     const rule = mentionRule(m);
     return { rule, path: m, reason: denyReason(rule, m) };

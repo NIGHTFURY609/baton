@@ -224,6 +224,95 @@ describe("shellWriteTargets", () => {
     expect(shellWriteTargets(cmd)).toEqual([]);
   });
 
+  // bt-2a8 fix round 1.
+  const W = `node -e "require('fs').writeFileSync('.context/STATE.md','x')"`;
+  const heredocMsg = (body: string): string =>
+    `git commit -m "$(cat <<'EOF'\nfix(guards): keep the scan\n\n${body}\nEOF\n)" -- src/hooks/guards.ts .context/tasks.jsonl`;
+  const round1Deny: [string, string][] = [
+    [`echo <(${W})`, "state"],
+    [`grep x <(${W})`, "state"],
+    [`cat <(${W})`, "state"],
+    [`echo x > >(${W})`, "state"],
+    ["echo (Set-Content .context\\STATE.md x)", "state"],
+    ["echo @(Set-Content .context\\STATE.md x)", "state"],
+    ["Write-Output (Remove-Item .context\\tasks.jsonl)", "tasks"],
+    ["(rm .context/STATE.md)", "state"],
+    ["echo x; (rm .context/STATE.md)", "state"],
+    ["( rm .context/STATE.md )", "state"],
+    ["{ rm .context/STATE.md; }", "state"],
+    ['git commit -m "docs: never `rm .context/tasks.jsonl` by hand"', "tasks"],
+    [`echo \\' $(${W})`, "state"],
+    [`echo $'\\'' $(${W})`, "state"],
+    [`echo "a \\" it's" $(${W})`, "state"],
+    ["echo \\\\$(rm .context/STATE.md)", "state"],
+    ["node <<'EOF'\nrequire('fs').writeFileSync('.context/STATE.md','x')\nEOF", "state"],
+    ["bash <<'EOF'\nrm .context/STATE.md\nEOF", "state"],
+    ["cat <<EOF\n$(rm .context/STATE.md)\nEOF", "state"],
+    ["git rebase -ix 'rm .context/STATE.md' HEAD~2", "state"],
+    ["git rebase --exe 'rm .context/STATE.md' HEAD~2", "state"],
+    ["git submodule foreach -q 'rm ../.context/STATE.md'", "state"],
+    ["git submodule foreach --quiet --recursive 'rm ../.context/STATE.md'", "state"],
+    ['git -c alias.x="!rm .context/memories.jsonl" x', "memories"],
+    ['git -c "alias.x=!rm .context/memories.jsonl" x', "memories"],
+    ["git -c alias.x=!rm\\ .context/memories.jsonl x", "memories"],
+    [`php -r "fopen('.context/tasks.jsonl', 'a+b');"`, "tasks"],
+    [`python -c "open('.context/tasks.jsonl', mode='w')"`, "tasks"],
+    ["echo $(echo $(echo $(echo $(echo $(echo $(rm .context/STATE.md))))))", "state"],
+  ];
+  it.each(round1Deny)("denies (round 1) %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const round1Allow = [
+    heredocMsg("Now `echo $(rm .context/STATE.md)` is denied."),
+    heredocMsg("The guard scans for `writeFileSync` near .context/tasks.jsonl."),
+    "git commit -m \"$(cat <<-'EOF'\n\tNow `rm .context/STATE.md` is denied.\n\tEOF\n)\" -- .context/tasks.jsonl",
+    'git commit -m "$(cat <<"EOF"\nNow `rm .context/STATE.md` is denied.\nEOF\n)" -- .context/tasks.jsonl',
+    'git commit -m "$(cat <<\\EOF\nNow `rm .context/STATE.md` is denied.\nEOF\n)" -- .context/tasks.jsonl',
+    'git commit -m "docs: never \\`rm .context/tasks.jsonl\\` by hand"',
+    'git commit -m "guards: scan \\$(...) for writeFileSync" -- .context/tasks.jsonl',
+    'echo "$(git log -1 --format=%s -- .context/tasks.jsonl)"',
+    "x=$(grep -c writeFileSync .context/knowledge/harness-limits.md)",
+    "echo $(echo $(echo $(echo $(echo $(echo $(cat .context/STATE.md))))))",
+    "echo $((1 + 2)) .context/STATE.md",
+  ];
+  it.each(round1Allow)("allows (round 1) %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
+  it("denies a 6000-deep substitution without throwing", () => {
+    const cmd = `echo ${"$(".repeat(6000)}rm .context/STATE.md${")".repeat(6000)}`;
+    expect(() => shellWriteTargets(cmd)).not.toThrow();
+    expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
+  });
+
+  it("denies every protected mention in a command over 16 KB", () => {
+    const long = `echo ${"x".repeat(17_000)} .context/STATE.md`;
+    expect(shellWriteTargets(long).map(mentionRule)).toEqual(["state"]);
+    expect(shellWriteTargets(`echo ${"x".repeat(17_000)}`)).toEqual([]);
+  });
+
+  it("caps the cost of deep nesting and long dense commands", () => {
+    const deep = `echo ${"$(".repeat(4000)}rm .context/STATE.md${")".repeat(4000)}`;
+    let t = performance.now();
+    expect(shellWriteTargets(deep).length).toBeGreaterThan(0);
+    expect(performance.now() - t).toBeLessThan(150);
+    const dense = `echo $(echo ${"=:".repeat(24 * 1024)}) .context/STATE.md`;
+    t = performance.now();
+    expect(shellWriteTargets(dense).length).toBeGreaterThan(0);
+    expect(performance.now() - t).toBeLessThan(150);
+    for (const api of ["fopen(", "open("]) {
+      const long = `php -r "${api.repeat(8 * 1024)}" .context/STATE.md`;
+      t = performance.now();
+      expect(shellWriteTargets(long).length).toBeGreaterThan(0);
+      const short = `php -r "${api.repeat(2000)}" .context/STATE.md`;
+      expect(() => shellWriteTargets(short)).not.toThrow();
+      expect(performance.now() - t).toBeLessThan(1000);
+    }
+  });
+
   it("normalises a quoted ./ mention and is repeatable", () => {
     const cmd = 'echo x > "./.context/STATE.md"';
     expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
@@ -361,6 +450,15 @@ describe("checkToolCall", () => {
     expect(d?.rule).toBe("state");
     expect(d?.reason).toContain("baton handoff");
     expect(rule("NotebookEdit", { notebook_path: "N:/repo/.context/tasks.jsonl" })).toBe("tasks");
+  });
+
+  it("reads PowerShell commands without bash escapes (bt-2a8)", () => {
+    const ps = (command: string) => rule("PowerShell", { command });
+    expect(ps('git commit -m "fix writeFile race" -- src/a.ts .context\\tasks.jsonl')).toBeNull();
+    expect(ps('Write-Output "$(Set-Content -Path .context\\STATE.md -Value x)"')).toBe("state");
+    // In PowerShell a backslash escapes nothing, so this subexpression runs.
+    expect(ps('Write-Output "x\\$(Set-Content .context\\STATE.md x)"')).toBe("state");
+    expect(rule("Bash", { command: 'echo "x\\$(rm .context/STATE.md)"' })).toBeNull();
   });
 
   it("covers decision records by status", () => {
