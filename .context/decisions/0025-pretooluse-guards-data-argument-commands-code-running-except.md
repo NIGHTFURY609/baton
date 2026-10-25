@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-25
 decision-makers: [NIGHTFURY609]
-verified_at: "afbaaa60b5ab"
+verified_at: "778f90fd5d67"
 source_paths: ["src/hooks/guards.ts", "src/hooks/pre-tool-use.ts", "plugin/hooks/hooks.json"]
 supersedes: "0020"
 spec_sections: [hooks, decisions, tasks]
