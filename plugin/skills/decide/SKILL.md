@@ -16,6 +16,6 @@ license: MIT
 
 ## Rules
 
-- Decisions are append-only. To change one, supersede it with a new record. The PreToolUse hook denies hand edits to accepted records and hand-made record files.
+- Decisions are append-only. To change one, supersede it with a new record. The PreToolUse hook denies hand edits to any record that is not proposed, to any record's frontmatter, and hand-made record files.
 - Load-bearing: dependencies, storage and file formats, public interfaces, security model, anything the spec marks load-bearing.
 - `baton decide` with no arguments lists every record with its status.

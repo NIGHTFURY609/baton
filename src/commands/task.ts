@@ -344,7 +344,9 @@ export function registerTask(program: Command): void {
 
   task
     .command("close")
-    .description("close tasks (refuses with open children or open blockers unless --force)")
+    .description(
+      "close tasks (refuses with open children, open blockers or a check: label unless --force)",
+    )
     .argument("<ids...>")
     .option("-r, --reason <text>", "close reason", "Closed")
     .option(

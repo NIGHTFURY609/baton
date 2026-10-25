@@ -20,8 +20,6 @@ export interface HookContext {
 
 type Handler = (input: HookInput, ctx: HookContext) => Promise<HookResult>;
 
-const noop: Handler = async () => ({ kind: "noop" });
-
 export const PRE_COMPACT_TAIL_BYTES = 262_144;
 export const SESSION_END_TAIL_BYTES = 65_536;
 

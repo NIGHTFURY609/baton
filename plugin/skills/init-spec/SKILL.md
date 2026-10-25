@@ -29,4 +29,4 @@ Goal: a short spec.md whose every section can be checked for freshness. Intent a
 
 - Keep each section under ~15 lines. The mission packet budget is 9,000 characters for everything.
 - Do not invent requirements; mark unknowns as open questions in the section text.
-- Never edit `.context/STATE.md`, decision frontmatter or accepted records; fill a proposed record's body (decide skill).
+- Never edit `.context/STATE.md`. For decisions, edit only a proposed record's body (decide skill); every other record, and every frontmatter, changes only through `baton decide`.

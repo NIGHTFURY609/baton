@@ -26,7 +26,7 @@ baton is a CLI-first continuity layer for coding agents (TypeScript, Node ≥ 22
 ## Continuity rules
 
 - Do not edit `.context/STATE.md`, `.context/tasks.jsonl` or `.context/memories.jsonl` by hand: use `baton handoff`, `baton task …` and `baton remember`. The PreToolUse hook denies direct edits.
-- Decisions go through `baton decide` (MADR, append-only): never edit decision frontmatter or accepted records; fill a proposed record's body. `baton decide --accept` or a superseding record changes a status.
+- Decisions go through `baton decide` (MADR, append-only): edit only a proposed record's body; every other record, and every frontmatter, changes only through `baton decide`. `baton decide --accept` or a superseding record changes a status.
 - Load-bearing choices (dependencies, storage formats, hook semantics) get a decision before code; run `baton decide --preflight` first.
 - No markdown TODO lists; work items live in the task store (`baton task ready`). Claim before you start (`baton task update <id> --claim`): verify's diff counts from the claim. New work: `baton task create "…" --check "<cmd>"`.
 - A task is done when `baton verify <id>` passes its check; `baton task close` refuses a checked task without `--force`.

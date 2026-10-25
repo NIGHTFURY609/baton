@@ -11,7 +11,7 @@
 ## Continuity rules
 <!-- baton: {id: rules-continuity, kind: rule, verified_at: null, source_paths: [".context/**"]} -->
 
-- Do not edit `.context/STATE.md` directly; `baton handoff` regenerates it. Decision records come from `baton decide`: never edit decision frontmatter or accepted records; fill a proposed record's body.
+- Do not edit `.context/STATE.md` directly; `baton handoff` regenerates it. Decision records come from `baton decide`: edit only a proposed record's body; every other record, and every frontmatter, changes only through `baton decide`.
 - Load-bearing choices get a decision record before code (`baton decide --preflight` first).
 - No markdown TODO lists; work items live in the task store (`baton task ready`, `baton task create`). Never edit `.context/tasks.jsonl` by hand.
 - A task is done when `baton verify <id>` runs its check and closes it.
