@@ -17,7 +17,7 @@ In scope: section-level freshness, the budgeted mission packet, hook-generated h
 Not in scope (load-bearing): spec or plan authoring beyond `/init-spec` (superpowers and Spec Kit are upstream); a full project tracker (no Dolt, sync server, UI, molecules or gates; baton ships only the minimal task store of ADR 0009); rules-file sync engines (rulesync-class tools); always-on output-style compression (caveman-style token savers; on-demand explain voices are in scope, ADR 0010); a server that owns state; a hand-maintained mindmap.
 
 ## Context format
-<!-- baton: {id: context-format, kind: intent, verified_at: "428730e2882f", source_paths: ["src/core/frontmatter.ts", "src/core/paths.ts", "src/core/sections.ts", "src/core/init.ts", "src/core/templates.generated.ts", "templates/**"]} -->
+<!-- baton: {id: context-format, kind: intent, verified_at: "428730e2882f", source_paths: ["src/core/frontmatter.ts", "src/core/paths.ts", "src/core/sections.ts", "src/core/init.ts", "src/core/templates.generated.ts", "src/core/compile.ts", "src/commands/compile.ts", "templates/**"]} -->
 
 Six documents: rules (→ AGENTS.md), spec, decisions, task store, STATE, knowledge. Files in git are the truth. Structured where mutable, prose where stable. Every section has `id`, `kind`, `verified_at`, `source_paths`. Full format: docs/design/context-format.md.
 
@@ -47,12 +47,12 @@ Hooks are the enforcement layer; the MCP is only an adapter. Hooks fail open, us
 Thin procedures that call the CLI and carry the taxonomy and lifecycle rules: `/init-spec`, `/checkpoint`, `/handoff`, `/decide`, `/doc-audit`, `/baton` (routes `/baton <args>` to the CLI or to the matching skill, ADR 0010). Spec-only frontmatter so they load in every Agent Skills harness.
 
 ## Tasks
-<!-- baton: {id: tasks, kind: intent, verified_at: null, source_paths: ["src/core/tasks/**", "src/commands/task.ts"]} -->
+<!-- baton: {id: tasks, kind: intent, verified_at: null, source_paths: ["src/core/tasks/**", "src/core/verify.ts", "src/commands/task.ts", "src/commands/verify.ts"]} -->
 
 Work items live in a structured task store: by default baton's own, ported from Beads (ADR 0009), stored in `.context/tasks.jsonl` with a SQLite cache, changed only through `baton task`. Tasks have hash ids, dependencies, child tasks, comments, an atomic claim and a ready queue. They link to spec sections with `spec:<id>` labels and to their check with `check:<command>`. A task is done only when `baton verify` runs its check and it passes; no proof string from the model is accepted. Short project facts live alongside as memories (`baton remember`).
 
 ## Decisions
-<!-- baton: {id: decisions, kind: intent, verified_at: null, source_paths: ["src/core/decisions.ts", "src/commands/decide.ts"]} -->
+<!-- baton: {id: decisions, kind: intent, verified_at: null, source_paths: ["src/core/decisions.ts", "src/core/decide.ts", "src/core/preflight.ts", "src/commands/decide.ts"]} -->
 
 MADR 4.0 records, append-only: bodies never change once accepted; only `baton decide` rewrites a status line, and only `verify-doc` and accepting a record (`decide --accept`, `decide --status accepted`) stamp `verified_at` (ADR 0018). `decide --preflight` checks a proposed change against accepted decisions and the spec before it lands.
 
