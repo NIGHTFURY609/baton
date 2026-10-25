@@ -197,6 +197,35 @@ describe("TaskService", () => {
     expect(s.reopen(t.id).startedAt).toBeUndefined();
   });
 
+  it("update --status open on a closed task clears started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    expect(s.claim(t.id).startedAt).toBeDefined();
+    s.close(t.id, "done");
+    const r = s.update(t.id, { status: "open" });
+    expect(r.startedAt).toBeUndefined();
+    expect(r.closedAt).toBeUndefined();
+  });
+
+  it("update --status in_progress on a closed task restarts started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    s.claim(t.id);
+    s.close(t.id, "done");
+    const r = s.update(t.id, { status: "in_progress" });
+    expect(r.startedAt).toBeDefined();
+    expect(r.closedAt).toBeUndefined();
+  });
+
+  it("update --status in_progress on an open task keeps its started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    const started = s.claim(t.id).startedAt;
+    s.update(t.id, { status: "open", assignee: "" });
+    const again = s.update(t.id, { status: "in_progress" });
+    expect(again.startedAt).toBe(started);
+  });
+
   it("keeps comments, labels and memories in sorted, minimal JSONL", () => {
     const s = open();
     const t = s.create({ title: "T", labels: ["spec:freshness", "check:npm test"] });

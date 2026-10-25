@@ -330,6 +330,30 @@ describe("verifyTask", () => {
     expect(out.status).toBe("no-diff");
   });
 
+  it("a task reopened via update --status, then re-claimed, does not verify against its earlier work", async () => {
+    const root = makeRepo(CONTEXT_FIXTURE, { git: false });
+    runGit(root, "-c", "init.defaultBranch=main", "init", "-q");
+    let t: Awaited<ReturnType<typeof claimed>>;
+    try {
+      process.env.GIT_COMMITTER_DATE = "2025-12-01T00:00:00+00:00";
+      commitAll(root, "base");
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+      t = await claimed(root, [`check:${PASS}`]);
+      process.env.GIT_COMMITTER_DATE = "2026-01-01T00:10:00+00:00";
+      writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+      commitAll(root, "first round");
+      await withService(root, "tester", (s) => s.close(t.id, "done", true));
+      await withService(root, "tester", (s) => s.update(t.id, { status: "open" }));
+    } finally {
+      vi.useRealTimers();
+      delete process.env.GIT_COMMITTER_DATE;
+    }
+    await withService(root, "tester", (s) => s.claim(t.id));
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, { requireDiff: true, close: true });
+    expect(out.status).toBe("no-diff");
+  });
+
   it("reports already-closed without running anything", async () => {
     const root = makeRepo();
     const t = await claimed(root, [`check:${FAIL3}`]);
