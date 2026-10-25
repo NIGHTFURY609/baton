@@ -171,6 +171,14 @@ describe("TaskService", () => {
     expect(s.get(p.id)?.closedAt).toBeUndefined();
   });
 
+  it("reopen clears started_at, so the next claim starts fresh", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    expect(s.claim(t.id).startedAt).toBeDefined();
+    s.close(t.id, "done");
+    expect(s.reopen(t.id).startedAt).toBeUndefined();
+  });
+
   it("keeps comments, labels and memories in sorted, minimal JSONL", () => {
     const s = open();
     const t = s.create({ title: "T", labels: ["spec:freshness", "check:npm test"] });

@@ -383,7 +383,7 @@ export function registerTask(program: Command): void {
 
   task
     .command("reopen")
-    .description("reopen a closed task")
+    .description("reopen a closed task (clears its start, so verify counts from the next claim)")
     .argument("<id>")
     .action(
       action(async (id: string) => {

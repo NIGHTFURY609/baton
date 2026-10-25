@@ -470,12 +470,13 @@ export class TaskService {
     });
   }
 
+  /** Reopen a task. `started_at` is cleared, so verify's diff rule counts from the next claim. */
   reopen(id: string): Issue {
     return this.db.write(() => {
       this.require(id);
       this.db.run(
-        `UPDATE issues SET status = 'open', closed_at = NULL, close_reason = NULL, updated_at = ?
-         WHERE id = ?`,
+        `UPDATE issues SET status = 'open', closed_at = NULL, close_reason = NULL, started_at = NULL,
+           updated_at = ? WHERE id = ?`,
         this.now(),
         id,
       );
