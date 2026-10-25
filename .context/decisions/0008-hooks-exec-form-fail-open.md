@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-16
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "3bbe17408dd2"
 source_paths: [plugin/hooks/hooks.json, src/hooks/**]
 spec_sections: [hooks]
 ---

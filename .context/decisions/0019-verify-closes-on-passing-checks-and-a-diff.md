@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-21
 decision-makers: [maintainer]
-verified_at: null
+verified_at: "3bbe17408dd2"
 source_paths: [src/core/verify.ts, src/commands/verify.ts, src/commands/task.ts, src/hooks/stop.ts, src/core/config.ts]
 spec_sections: [tasks]
 ---

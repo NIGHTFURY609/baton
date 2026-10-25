@@ -3,12 +3,12 @@
 `baton compile` regenerates AGENTS.md from the marked sections below; text outside them, like this line, is not compiled. CI runs `baton compile --check`.
 
 ## Orientation
-<!-- baton: {id: rules-orientation, kind: rule, verified_at: null, source_paths: ["docs/roadmap.md"]} -->
+<!-- baton: {id: rules-orientation, kind: rule, verified_at: "3bbe17408dd2", source_paths: ["docs/roadmap.md"]} -->
 
 baton is a CLI-first continuity layer for coding agents (TypeScript, Node ≥ 22.13). Read `.context/STATE.md` first, then `docs/roadmap.md` for the current phase.
 
 ## Commands
-<!-- baton: {id: rules-commands, kind: rule, verified_at: null, source_paths: [package.json]} -->
+<!-- baton: {id: rules-commands, kind: rule, verified_at: "3bbe17408dd2", source_paths: [package.json]} -->
 
 - `npm run check`: lint (Biome), typecheck, tests (Vitest). Must pass before a task is done.
 - `npm run build`: bundle to `dist/baton.mjs` and sync `plugin/dist/`.
@@ -38,6 +38,6 @@ baton is a CLI-first continuity layer for coding agents (TypeScript, Node ≥ 22
 - Generated files: `AGENTS.md` (`baton compile`) and `.context/STATE.md` (`baton handoff`).
 
 ## Where things are
-<!-- baton: {id: rules-where, kind: rule, verified_at: null, source_paths: []} -->
+<!-- baton: {id: rules-where, kind: rule, verified_at: "3bbe17408dd2", source_paths: []} -->
 
 - Design: `docs/design/` (architecture, context format, metrics) · Evidence: `docs/research/` · Plans: `docs/superpowers/plans/`
