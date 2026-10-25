@@ -13,6 +13,20 @@ describe("decisions", () => {
     expect(adrFileName(7, "Packet budget")).toBe("0007-packet-budget.md");
   });
 
+  it("keeps slugs ASCII, folding accents and falling back to 'decision'", () => {
+    expect(slugify("Café naïve résumé")).toBe("cafe-naive-resume");
+    expect(slugify("Хранилище задач")).toBe("decision");
+    expect(slugify("Use Хранилище for tasks")).toBe("use-for-tasks");
+    expect(adrFileName(24, "Хранилище задач")).toBe("0024-decision.md");
+  });
+
+  it("numbers past a file whose slug is not ASCII", async () => {
+    const dir = makeTempDir("baton-adr-");
+    writeFileSync(join(dir, "0005-хранилище.md"), "");
+    writeFileSync(join(dir, "0004-Upper-Case.md"), "");
+    expect(await nextAdrNumber(dir)).toBe(6);
+  });
+
   it("finds the next free number", async () => {
     const dir = makeTempDir("baton-adr-");
     expect(await nextAdrNumber(dir)).toBe(1);
