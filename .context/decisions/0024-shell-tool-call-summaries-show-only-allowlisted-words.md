@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-10-25
 decision-makers: [NIGHTFURY609]
-verified_at: "088ef58b625e"
+verified_at: "e657d5a33d1c"
 source_paths: ["src/core/handoff.ts", "src/core/transcript.ts", "src/hooks/**", "src/cli.ts", "plugin/hooks/hooks.json"]
 supersedes: "0023"
 spec_sections: [handoff, hooks]
