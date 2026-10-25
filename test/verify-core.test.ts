@@ -169,22 +169,18 @@ describe("runCheck", () => {
     expect(run.exitCode).toBe(0);
   });
 
-  // taskkill.exe start-up varies when the whole suite runs in parallel: measured 320 to 550 ms, and
-  // a 1.7 to 2.0 s spike inferred from the one flake. A second flake source is node start-up under
-  // load exceeding the 300 ms timeout, so pid.txt is missing. Retry absorbs both. The wrong kill
-  // order is not transient: it always takes about 2.3 s.
-  it("kills the whole process tree on timeout", { retry: 2 }, async () => {
+  // Asserts which path ended the child, not elapsed time: wall-clock bounds flake under parallel load.
+  // With the wrong kill order the grandchild survives, its pipes stay open and the backstop fires.
+  // The timeout leaves node room to start under load so pid.txt exists before the kill.
+  it("kills the whole process tree on timeout", async () => {
     const dir = makeTempDir();
-    const started = Date.now();
     const run = await runCheck(
       `node -e "require('fs').writeFileSync('pid.txt',String(process.pid));setInterval(()=>0,1000)"`,
       dir,
-      { timeoutMs: 300 },
+      { timeoutMs: 1500 },
     );
-    const elapsed = Date.now() - started;
     expect(run.timedOut).toBe(true);
-    // The 2 s backstop would only release the pipes at about 2.3 s.
-    expect(elapsed).toBeLessThan(1500);
+    expect(run.killedBy).toBe("tree");
     expect(existsSync(join(dir, "pid.txt"))).toBe(true);
     const pid = Number(readFileSync(join(dir, "pid.txt"), "utf8"));
     expect(Number.isInteger(pid)).toBe(true);
