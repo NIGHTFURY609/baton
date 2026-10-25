@@ -11,6 +11,7 @@ import {
   readTranscriptTail,
   recentToolCalls,
   redactSecrets,
+  summarizeShellCommand,
   summarizeToolUse,
   sumUsage,
   toolUses,
@@ -263,6 +264,74 @@ describe("shell tool-call summaries: command names only", () => {
     ["npm run build && node dist/baton.mjs task ready", "Bash: npm run build && baton task ready"],
   ])("summarises %s", (command, expected) => {
     expect(one("Bash", command)).toBe(expected);
+  });
+
+  it.each([
+    // Escapes: Bash `\` outside single quotes and PowerShell's backtick escape the next character.
+    ["Bash", 'echo "pass\\"; hunter2 x"', "Bash: echo (+1 args)"],
+    ["PowerShell", 'Write-Host "a`"; hunter2 b"', "PowerShell: Write-Host (+1 args)"],
+    ["Bash", "echo pass\\; hunter2 x", "Bash: echo (+3 args)"],
+    ["PowerShell", "Write-Host a`; hunter2 b", "PowerShell: Write-Host (+3 args)"],
+    ["Bash", "echo $'a\\'; hunter2 b'", "Bash: echo (+1 args)"],
+    // The other shell's escape is not an escape: the summary of an unknown shell agrees or says nothing.
+    ["run_shell_command", 'echo "pass\\"; hunter2 x"', "run_shell_command: (expression)"],
+    // Groups: backtick substitution, $( ) inside double quotes, [[ ]].
+    ["Bash", "echo `printf x; hunter2 y`", "Bash: echo (+1 args)"],
+    ["Bash", 'echo "$(echo "; hunter2 x")"', "Bash: echo (+1 args)"],
+    ["PowerShell", 'Write-Host "$(Get-Date "; hunter2 x")"', "PowerShell: Write-Host (+1 args)"],
+    ["Bash", "[[ -n x && hunter2 == y ]]", "Bash: (expression)"],
+    // Comments, PowerShell typographic quotes and the stop-parsing token.
+    ["Bash", "echo hi # ; hunter2 x", "Bash: echo (+1 args)"],
+    ["PowerShell", "Write-Host a <# ; hunter2 #> b", "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "Write-Host “a; hunter2 b”", "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "icacls x --% /grant hunter2; y", "PowerShell: icacls (+2 args)"],
+    ["PowerShell", "icacls x --% /grant hunter2 | y", "PowerShell: icacls (+2 args)"],
+    // git global options that take a separate value; unknown options hide the subcommand.
+    ["Bash", "git --git-dir hunter commit", "Bash: git commit (+2 args)"],
+    ["Bash", "git --namespace hunter push", "Bash: git push (+2 args)"],
+    ["Bash", "git --work-tree hunter -C sub --no-pager status", "Bash: git status (+5 args)"],
+    ["Bash", "git --frobnicate hunter push", "Bash: git (+3 args)"],
+    // baton: known subcommands only, and a task id only where the command takes one.
+    ["Bash", "baton remember api-key123abc", "Bash: baton remember (+1 args)"],
+    ["Bash", "baton recall my-secret", "Bash: baton recall (+1 args)"],
+    ["Bash", "baton task hunter", "Bash: baton task (+1 args)"],
+    ["Bash", "baton hunter", "Bash: baton (+1 args)"],
+    ["Bash", "baton task create my-task", "Bash: baton task create (+1 args)"],
+    ["Bash", "baton verify api-key123abc", "Bash: baton verify (+1 args)"],
+  ])("%s %s keeps the argument word out", (tool, command, expected) => {
+    const out = one(tool, command);
+    expect(out).toBe(expected);
+    expect(out).not.toMatch(/hunter|api-key|secret|my-task/);
+  });
+
+  it.each([
+    ["baton task show bt-a3f.1", "Bash: baton task show bt-a3f.1"],
+    ["baton task comment bt-a3f hello there", "Bash: baton task comment bt-a3f (+2 args)"],
+    ["baton hook session-start", "Bash: baton hook session-start"],
+    ["baton hook frobnicate", "Bash: baton hook (+1 args)"],
+  ])("summarises %s", (command, expected) => {
+    expect(one("Bash", command)).toBe(expected);
+  });
+
+  it.each([
+    ["time", "Bash: time"],
+    ["sudo", "Bash: sudo"],
+    ["FOO=1 BAR=2", "Bash: (assignment)"],
+    ["FOO=1 time", "Bash: time"],
+  ])("shows (assignment) only for environment assignments: %s", (command, expected) => {
+    expect(one("Bash", command)).toBe(expected);
+  });
+
+  it("scans a bounded prefix of a huge line", () => {
+    const line = Array(100_000).fill("a").join("|");
+    expect(line.length).toBeGreaterThan(199_000);
+    const start = performance.now();
+    const out = summarizeShellCommand(line);
+    const ms = performance.now() - start;
+    // 1024 scanned characters; " | " between parts at most triples them.
+    expect(out.length).toBeLessThanOrEqual(3 * 1024);
+    expect(out.endsWith("…")).toBe(true);
+    expect(ms).toBeLessThan(250);
   });
 });
 

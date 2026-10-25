@@ -11,6 +11,7 @@ import type { Dirent } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isTaskIdShape } from "./tasks/native/ids.js";
 
 export interface Usage {
   inputTokens: number;
@@ -260,13 +261,20 @@ export function redactSecrets(text: string): string {
  * into the 80-char window).
  */
 function capScan(text: string): string {
-  if (text.length <= MAX_SCAN) return text;
-  let cut = text.slice(0, MAX_SCAN);
-  if (!/\s/.test(text.charAt(MAX_SCAN))) {
-    const lastSpace = cut.search(/\s\S*$/);
-    cut = lastSpace === -1 ? "" : cut.slice(0, lastSpace);
+  return text.length <= MAX_SCAN ? text : `${headAtBoundary(text, /\s/)}…`;
+}
+
+/**
+ * The first MAX_SCAN characters of a longer text, cut back to the last `boundary` character
+ * when the cut lands inside a token, so no fragment of that token is kept.
+ */
+function headAtBoundary(text: string, boundary: RegExp): string {
+  const head = text.slice(0, MAX_SCAN);
+  if (boundary.test(text.charAt(MAX_SCAN))) return head;
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (boundary.test(head.charAt(i))) return head.slice(0, i);
   }
-  return `${cut}…`;
+  return "";
 }
 
 function redactHead(head: string): string {
@@ -398,8 +406,18 @@ function shownPath(p: string, root: string, platform: NodeJS.Platform): string {
 
 const PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
-/** Shell tools whose `command` is summarised by command names only (as SHELL_TOOLS in hooks/guards.ts). */
-const SHELL_SUMMARY_TOOLS = new Set(["Bash", "PowerShell", "run_shell_command"]);
+/** The shell grammar a command line is read with. */
+export type ShellDialect = "bash" | "powershell";
+
+/**
+ * Shell tools whose `command` is summarised by command names only (as SHELL_TOOLS in
+ * hooks/guards.ts), with their grammar. Gemini's `run_shell_command` may run either.
+ */
+const SHELL_SUMMARY_TOOLS = new Map<string, ShellDialect | undefined>([
+  ["Bash", "bash"],
+  ["PowerShell", "powershell"],
+  ["run_shell_command", undefined],
+]);
 
 /** A simple command of a shell line and the operator after it. */
 interface ShellPart {
@@ -407,17 +425,28 @@ interface ShellPart {
   op: string;
 }
 
+/** PowerShell also reads typographic quotes as quotes. */
+const isDoubleQuote = (c: string, ps: boolean): boolean =>
+  c === '"' || (ps && (c === "“" || c === "”" || c === "„"));
+const isSingleQuote = (c: string, ps: boolean): boolean =>
+  c === "'" || (ps && (c === "‘" || c === "’" || c === "‚" || c === "‛"));
+
 /**
- * Split one shell line into simple commands and their words. Quotes and (), {} groups
- * are kept whole and never split, so text inside them can never become a command name.
- * An unclosed quote or group runs to the end of the line.
+ * Split one shell line into simple commands and their words. Quotes, escaped characters
+ * (Bash `\` outside single quotes, PowerShell's backtick) and groups ((), {}, `$( )` also
+ * inside double quotes, Bash backticks and `[[ ]]`) are kept whole and never split, so text
+ * inside them can never become a command name. An unclosed quote or group runs to the end
+ * of the line; a comment and PowerShell's `--%` end the scan. Every doubt keeps more text
+ * inside one word, so a summary can only show less.
  */
-function shellParts(line: string): ShellPart[] {
+function shellParts(line: string, dialect: ShellDialect): ShellPart[] {
+  const ps = dialect === "powershell";
+  const escapeChar = ps ? "`" : "\\";
   const parts: ShellPart[] = [];
   let words: string[] = [];
   let word = "";
-  let quote: string | null = null;
-  let depth = 0;
+  /** Open quotes and groups, innermost last: ' $' " ( { ` [[ */
+  const open: string[] = [];
   const endWord = (): void => {
     if (word !== "") words.push(word);
     word = "";
@@ -429,79 +458,246 @@ function shellParts(line: string): ShellPart[] {
   };
   for (let i = 0; i < line.length; i++) {
     const c = line.charAt(i);
-    if (quote !== null) {
+    const next = line.charAt(i + 1);
+    const top = open[open.length - 1];
+    if (top === "'") {
       word += c;
-      if (c === quote) quote = null;
-    } else if (c === '"' || c === "'") {
-      quote = c;
+      if (isSingleQuote(c, ps)) open.pop();
+      continue;
+    }
+    if (c === escapeChar) {
+      word += c + next;
+      i++;
+      continue;
+    }
+    if (top === "$'") {
       word += c;
-    } else if (c === "(" || c === "{") {
-      depth++;
+      if (c === "'") open.pop();
+      continue;
+    }
+    if (top === '"') {
       word += c;
-    } else if ((c === ")" || c === "}") && depth > 0) {
-      depth--;
+      if (isDoubleQuote(c, ps)) open.pop();
+      else if (c === "$" && (next === "(" || (!ps && next === "{"))) {
+        word += next;
+        open.push(next);
+        i++;
+      } else if (!ps && c === "`") open.push("`");
+      continue;
+    }
+    // Outside quotes: at the top level or inside a group.
+    const prev = line.charAt(i - 1);
+    const lengthOf = prev === "{" && line.charAt(i - 2) === "$"; // ${#name}
+    if (c === "#" && !lengthOf && (word === "" || /[\s;&|(){}]/.test(prev))) break; // comment
+    if (ps && c === "<" && next === "#") break; // <# block comment #>
+    if (isDoubleQuote(c, ps)) open.push('"');
+    else if (isSingleQuote(c, ps)) open.push("'");
+    else if (!ps && c === "$" && next === "'") {
+      open.push("$'");
       word += c;
-    } else if (depth > 0) {
-      word += c;
+      i++;
+      word += next;
+      continue;
+    } else if (!ps && c === "`") {
+      if (top === "`") open.pop();
+      else open.push("`");
+    } else if (c === "(" || c === "{") open.push(c);
+    else if ((c === ")" && top === "(") || (c === "}" && top === "{")) open.pop();
+    else if (!ps && open.length === 0 && word === "" && c === "[" && next === "[") {
+      open.push("[[");
+      word += "[[";
+      i++;
+      continue;
+    } else if (
+      top === "[[" &&
+      c === "]" &&
+      next === "]" &&
+      /\s/.test(line.charAt(i - 1)) &&
+      /^(?:$|[\s;&|)])/.test(line.charAt(i + 2))
+    ) {
+      open.pop();
+      word += "]]";
+      i++;
+      continue;
+    } else if (open.length > 0) {
+      // Inside a group: kept whole.
+    } else if (ps && word === "" && line.startsWith("--%", i)) {
+      // Stop-parsing token: what follows is passed on verbatim, so the scan ends here.
+      word = line.slice(i);
+      break;
     } else if (/\s/.test(c)) {
       endWord();
-    } else if (c === "&" && (line.charAt(i - 1) === ">" || line.charAt(i + 1) === ">")) {
-      word += c; // 2>&1, &>
-    } else if ((c === "&" || c === "|") && line.charAt(i + 1) === c) {
+      continue;
+    } else if (c === "&" && (line.charAt(i - 1) === ">" || next === ">")) {
+      // 2>&1, &>
+    } else if ((c === "&" || c === "|") && next === c) {
       endPart(c + c);
       i++;
+      continue;
     } else if (c === "&" || c === "|" || c === ";") {
       endPart(c);
-    } else {
-      word += c;
+      continue;
     }
+    word += c;
   }
   endPart("");
   return parts.filter((p) => p.words.length > 0);
 }
 
 const SHELL_WRAPPERS = new Set(["sudo", "env", "command", "nohup", "time"]);
+const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const SAFE_NAME = /^[A-Za-z0-9_][\w.+-]*$/;
 const SUBCOMMAND = /^[a-z][a-z-]*$/;
 const SCRIPT_NAME = /^[\w:.-]+$/;
-const TASK_ID = /^[a-z][a-z0-9]*-[a-z0-9]+(?:\.\d+)*$/;
-const BATON_GROUPS = new Set(["task", "hook"]);
+
+/** git global options that take the next word as their value (git.c, handle_options). */
+const GIT_VALUE_OPTIONS = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--config-env",
+  "--attr-source",
+  "--shallow-file",
+]);
+/** git global options that may carry an attached `=value`. */
+const GIT_EQUALS_OPTIONS = new Set([
+  ...[...GIT_VALUE_OPTIONS].filter((o) => o.startsWith("--")),
+  "--exec-path",
+  "--list-cmds",
+]);
+/** git global options without a value. */
+const GIT_FLAGS = new Set([
+  "-p",
+  "-P",
+  "-v",
+  "-h",
+  "--paginate",
+  "--no-pager",
+  "--bare",
+  "--no-replace-objects",
+  "--literal-pathspecs",
+  "--no-literal-pathspecs",
+  "--glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+  "--no-optional-locks",
+  "--no-advice",
+  "--exec-path",
+  "--html-path",
+  "--man-path",
+  "--info-path",
+  "--version",
+  "--help",
+]);
+
+/**
+ * baton's commands (`baton --help`), each mapped to whether its first argument is a task id.
+ * `task` and `hook` are groups: their action is shown too.
+ */
+const BATON_COMMANDS = new Map<string, boolean>([
+  ["init", false],
+  ["mission", false],
+  ["handoff", false],
+  ["drift", false],
+  ["verify-doc", false],
+  ["decide", false],
+  ["verify", true],
+  ["explain", false],
+  ["compile", false],
+  ["stats", false],
+  ["remember", false],
+  ["recall", false],
+  ["forget", false],
+  ["memories", false],
+  ["mcp", false],
+  ["help", false],
+]);
+const BATON_GROUPS = new Map<string, Map<string, boolean>>([
+  [
+    "task",
+    new Map([
+      ["create", false],
+      ["list", false],
+      ["show", true],
+      ["ready", false],
+      ["blocked", false],
+      ["update", true],
+      ["close", true],
+      ["reopen", true],
+      ["delete", true],
+      ["dep", false],
+      ["comment", true],
+      ["import", false],
+      ["help", false],
+    ]),
+  ],
+  [
+    "hook",
+    new Map(
+      ["session-start", "pre-compact", "session-end", "pre-tool-use", "post-tool-use", "stop"].map(
+        (e): [string, boolean] => [e, false],
+      ),
+    ),
+  ],
+]);
 
 const withCount = (shown: string[], rest: number): string =>
   rest > 0 ? `${shown.join(" ")} (+${rest} args)` : shown.join(" ");
 
-/** The words shown for git: the subcommand after global options. */
+/** The words shown for git: the subcommand after known global options, else none. */
 function gitShown(rest: string[]): string[] {
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i] ?? "";
-    if (w === "-C" || w === "-c") i++;
-    else if (w.startsWith("-")) continue;
-    else return SUBCOMMAND.test(w) ? [w] : [];
+    if (GIT_VALUE_OPTIONS.has(w)) i++;
+    else if (GIT_FLAGS.has(w)) continue;
+    else if (w.startsWith("-")) {
+      const eq = w.indexOf("=");
+      if (eq === -1 || !GIT_EQUALS_OPTIONS.has(w.slice(0, eq))) return [];
+    } else return SUBCOMMAND.test(w) ? [w] : [];
   }
   return [];
 }
 
-/** The words shown for baton: `<sub>`, a group's action, then an optional task id. */
+/**
+ * The words shown for baton: a known command, a group's known action, then a task id for
+ * the commands that take one, when the word has the task id shape.
+ */
 function batonShown(rest: string[]): string[] {
-  const shown: string[] = [];
   const sub = rest[0] ?? "";
-  if (!SUBCOMMAND.test(sub)) return shown;
-  shown.push(sub);
-  if (BATON_GROUPS.has(sub) && SUBCOMMAND.test(rest[1] ?? "")) shown.push(rest[1] ?? "");
-  const id = rest[shown.length] ?? "";
-  if (TASK_ID.test(id)) shown.push(id);
+  const shown = [sub];
+  const group = BATON_GROUPS.get(sub);
+  let takesId = BATON_COMMANDS.get(sub);
+  if (group !== undefined) {
+    const action = rest[1] ?? "";
+    takesId = group.get(action);
+    if (takesId === undefined) return shown;
+    shown.push(action);
+  } else if (takesId === undefined) {
+    return [];
+  }
+  if (takesId && isTaskIdShape(rest[shown.length] ?? "")) shown.push(rest[shown.length] ?? "");
   return shown;
 }
 
 /** One simple command as its name, an allowlisted subcommand and an argument count. */
 function summarizeShellPart(words: string[]): string {
   let i = 0;
+  let wrapper = -1;
   while (i < words.length) {
     const w = words[i] ?? "";
-    if (/^[A-Za-z_]\w*=/.test(w) || SHELL_WRAPPERS.has(w.toLowerCase())) i++;
-    else break;
+    if (SHELL_WRAPPERS.has(w.toLowerCase())) {
+      if (wrapper === -1) wrapper = i;
+    } else if (!ASSIGNMENT.test(w)) break;
+    i++;
   }
-  if (i >= words.length) return "(assignment)";
+  if (i >= words.length) {
+    // Only assignments, or a wrapper with no command after it (bare `time`).
+    if (wrapper === -1) return "(assignment)";
+    return withCount([(words[wrapper] ?? "").toLowerCase()], words.length - wrapper - 1);
+  }
   const raw = (words[i] ?? "").replace(/\\/g, "/");
   const name = raw.slice(raw.lastIndexOf("/") + 1);
   if (!SAFE_NAME.test(name)) return "(expression)";
@@ -528,13 +724,31 @@ function summarizeShellPart(words: string[]): string {
 }
 
 /**
- * A shell command line as command names only (ADR 0023): each simple command shows its
- * name, plus the subcommand for `git <sub>`, `npm run <script>` and `baton <sub> [task-id]`,
- * plus `(+N args)`. Arguments never appear, so no secret or path in them reaches STATE.md.
+ * The first line of a command, scanned up to MAX_SCAN characters. A longer line is cut back
+ * to the last space or operator before the cut, so no fragment of a word is read.
  */
-export function summarizeShellCommand(command: string): string {
-  const line = command.split(/\r?\n/)[0] ?? "";
-  return shellParts(line)
+function scannedLine(command: string): { line: string; cut: boolean } {
+  const head = command.slice(0, MAX_SCAN + 1);
+  const nl = head.search(/\r?\n/);
+  if (nl !== -1) return { line: head.slice(0, nl), cut: false };
+  if (head.length <= MAX_SCAN) return { line: head, cut: false };
+  return { line: headAtBoundary(head, /[\s;&|]/), cut: true };
+}
+
+/**
+ * A shell command line as command names only (ADR 0024): each simple command shows its
+ * name, plus the subcommand for `git <sub>`, `npm run <script>` and
+ * `baton <sub> [<action>] [task-id]`, plus `(+N args)`. Arguments never appear, so no secret
+ * or path in them reaches STATE.md. Without a dialect, both grammars must agree, or the
+ * whole line shows as `(expression)`.
+ */
+export function summarizeShellCommand(command: string, dialect?: ShellDialect): string {
+  if (dialect === undefined) {
+    const bash = summarizeShellCommand(command, "bash");
+    return bash === summarizeShellCommand(command, "powershell") ? bash : "(expression)";
+  }
+  const { line, cut } = scannedLine(command);
+  const summary = shellParts(line, dialect)
     .map((p) => {
       const s = summarizeShellPart(p.words);
       if (p.op === "") return s;
@@ -542,6 +756,8 @@ export function summarizeShellCommand(command: string): string {
     })
     .join(" ")
     .replace(/ (?:&&|\|\||\||&)$|;$/, "");
+  if (!cut) return summary;
+  return summary === "" ? "…" : `${summary} …`;
 }
 
 /** One redacted, bounded line per tool call, safe to commit in STATE.md. */
@@ -560,7 +776,7 @@ export function summarizeToolUse(
     line =
       cmd === undefined
         ? t.name
-        : `${t.name}: ${bounded(summarizeShellCommand(cmd), root, platform)}`;
+        : `${t.name}: ${bounded(summarizeShellCommand(cmd, SHELL_SUMMARY_TOOLS.get(t.name)), root, platform)}`;
   } else if (t.name === "Grep" || t.name === "Glob") {
     const pattern = str(t.input.pattern);
     line = pattern === undefined ? t.name : `${t.name} ${bounded(pattern, root, platform, true)}`;

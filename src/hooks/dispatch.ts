@@ -59,7 +59,7 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
 
 /**
  * Event -> handler. Core modules load with dynamic import(), so a no-op hook
- * never pays for them. Wiring (docs/design/architecture.md, ADR 0023):
+ * never pays for them. Wiring (docs/design/architecture.md, ADR 0024):
  *
  * - session-start  -> mission packet as additionalContext; matcher includes
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]

@@ -1,7 +1,7 @@
 ---
 id: adr-0023
 kind: decision
-status: accepted
+status: "superseded by ADR-0024"
 date: 2026-10-25
 decision-makers: [NIGHTFURY609]
 verified_at: "5ddb64b22419"

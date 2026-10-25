@@ -127,6 +127,20 @@ export function nextChildNumber(parentId: string, existingIds: Iterable<string>)
   return max + 1;
 }
 
+const TASK_ID = new RegExp(
+  `^([a-z0-9]+(?:-[a-z0-9]+)*)-[0-9a-z]{3,8}(?:\\.[1-9]\\d{0,5}){0,${MAX_CHILD_DEPTH}}$`,
+);
+
+/**
+ * Whether `s` has the shape of a native task id: a prefix (lowercase kebab-case, at most 16
+ * characters, as config's `tasks.prefix`), "-", 3 to 8 base36 characters, then up to
+ * MAX_CHILD_DEPTH child numbers (bt-a3f, bt-a3f.1.2).
+ */
+export function isTaskIdShape(s: string): boolean {
+  const m = TASK_ID.exec(s);
+  return m !== null && (m[1] ?? "").length <= 16;
+}
+
 /** Default id prefix from a project folder name: lowercase alphanumerics, max 10 chars. */
 export function defaultPrefix(folderName: string): string {
   const p = folderName

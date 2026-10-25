@@ -1,7 +1,7 @@
 /**
  * `baton handoff`: regenerate .context/STATE.md from structured sources only
  * (task store, git status, diff --stat, recent tool calls). Format and
- * idempotence rules: ADR 0023 (superseding ADR 0015).
+ * idempotence rules: ADR 0024 (superseding ADRs 0015 and 0023).
  */
 
 import { basename } from "node:path";
