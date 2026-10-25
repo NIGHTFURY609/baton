@@ -20,8 +20,9 @@ import {
   withService,
 } from "./helpers/repo.js";
 
-// Counts every child process spawned through node:child_process.execFile (git() and beads
-// both use it), delegating to the real implementation.
+// Counts child processes started through node:child_process execFile and execFileSync (git()
+// and beads use them), delegating to the real implementation. spawn/spawnSync are not on
+// mission's path today, so they are not counted.
 const spawned = vi.hoisted(() => ({ count: 0 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -36,7 +37,12 @@ vi.mock("node:child_process", async (importOriginal) => {
       ...args,
     );
   };
-  return { ...actual, execFile: counted };
+  const realSync = actual.execFileSync;
+  const countedSync = ((...args: unknown[]) => {
+    spawned.count++;
+    return (realSync as (...a: unknown[]) => unknown)(...args);
+  }) as unknown as typeof actual.execFileSync;
+  return { ...actual, execFile: counted, execFileSync: countedSync };
 });
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");
@@ -195,20 +201,29 @@ describe("dogfood: this repo's packet", () => {
     }
   });
 
-  // Guards against subprocess fan-out in buildMission (e.g. one git call per section): process
-  // spawn is what makes a build slow on Windows. Measured: 14 per build; pinned with a margin of 2. Raise it only
-  // on purpose.
-  const MAX_SPAWNS_PER_BUILD = 16;
+  // Guards against per-section subprocess fan-out in buildMission (process spawn is what makes a
+  // build slow on Windows). It targets fan-out that scales with the number of sections; a single
+  // extra constant call can slip under the bound because of the +1 slack below.
+  // The count depends on repo data, so the bound is derived from it: FIXED_SPAWNS covers the calls
+  // every evaluateFreshness run makes (isGitRepo, headSha, the two ls-files calls of
+  // listRepoFiles, statusLines) plus the task snapshot's own calls; each distinct verified_at
+  // sha adds one changedFilesPerCommit call, and ignoredPaths adds at most one more.
+  const FIXED_SPAWNS = 6;
 
-  it(`builds the packet within ${MAX_SPAWNS_PER_BUILD} subprocess calls, the same on every build`, async () => {
+  it("bounds subprocess calls per distinct verified_at commit, the same on every build", async () => {
     const config = await loadConfig(REPO_ROOT);
+    const index = await loadSectionIndex(REPO_ROOT, { lenient: true });
+    const distinctShas = new Set(
+      index.sections.map((s) => s.meta.verifiedAt).filter((v): v is string => v !== null),
+    ).size;
+    const bound = FIXED_SPAWNS + distinctShas + 1;
     const counts: number[] = [];
     for (let i = 0; i < 2; i++) {
       const before = spawned.count;
       await buildMission(REPO_ROOT, config);
       counts.push(spawned.count - before);
     }
-    expect(counts[0]).toBeLessThanOrEqual(MAX_SPAWNS_PER_BUILD);
+    expect(counts[0]).toBeLessThanOrEqual(bound);
     expect(counts[1]).toBe(counts[0]);
   });
 });
