@@ -140,7 +140,9 @@ const SEG = String.raw`[^\s"'\`;|&<>()]`;
 const SEGNS = String.raw`[^\s"'\`;|&<>()/]`;
 const MENTION_SRC = String.raw`(?:^|[\s"'\`=(:,])((?:${SEG}*/)?(?:\.c(?:o(?:n(?:t(?:e(?:x(?:t)?)?)?)?)?)?[*?\[{]${SEG}*|\.context/${SEGNS}*[*?\[{]${SEG}*|\.context(?:/(?:STATE\.md|tasks\.jsonl|memories\.jsonl|decisions(?:/${SEG}*)?|\.cache(?:/${SEG}*)?))?/?|\.beads(?:/${SEG}*)?))(?=$|[\s"'\`;|&<>()])`;
 const mentionRe = (): RegExp => new RegExp(MENTION_SRC, "gi");
-const normMention = (m: string): string => m.replace(/^(?:\.\/)+/, "");
+/** Drop leading `./` and the `/` an escaped quote leaves after a file name (`\".context/STATE.md\"`). */
+const normMention = (m: string): string =>
+  m.replace(/^(?:\.\/)+/, "").replace(/(\.md|\.jsonl)\/$/i, "$1");
 
 function mentionsIn(text: string): string[] {
   return [...text.matchAll(mentionRe())].map((m) => normMention(m[1] ?? ""));
@@ -227,7 +229,64 @@ const DATA_ARG_COMMANDS = new Set([
   "baton",
 ]);
 const WRITE_API_RE =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|file_put_contents|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bf?open\s*\([^)]*['"][wax][bt+]{0,2}['"]/i;
+
+/**
+ * Bodies of the `$(…)` and backtick substitutions in a command, outside single quotes
+ * (where the shell runs them). An unclosed substitution runs to the end of the text.
+ */
+function substitutions(text: string): string[] {
+  const out: string[] = [];
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+    } else if (ch === "'" && quote === null) {
+      quote = "'";
+    } else if (ch === '"') {
+      quote = quote === '"' ? null : '"';
+    } else if (ch === "`") {
+      const end = text.indexOf("`", i + 1);
+      out.push(text.slice(i + 1, end < 0 ? text.length : end));
+      i = end < 0 ? text.length : end;
+    } else if (ch === "$" && text[i + 1] === "(") {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j++) {
+        if (text[j] === "(") depth++;
+        else if (text[j] === ")") depth--;
+      }
+      out.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+      i = j - 1;
+    }
+  }
+  return out;
+}
+
+/** Shell commands a git invocation runs: `rebase --exec`, `bisect run`, `submodule foreach`, `-c alias.x=!…`. */
+function gitNestedCommands(seg: string, rest: string[], sub: string | null): string[] {
+  const out: string[] = [];
+  const alias =
+    /(?:^|\s)-c\s+(?:'alias\.[^\s=']+=!([^']*)'?|"alias\.[^\s="]+=!([^"]*)"?|alias\.[^\s=]+=(?:'!([^']*)'?|"!([^"]*)"?|!(\S*)))/gi;
+  for (const m of seg.matchAll(alias)) out.push(m.slice(1).find((g) => g !== undefined) ?? "");
+  if (sub === "rebase") {
+    for (const m of seg.matchAll(/(?:^|\s)(?:--exec[=\s]|-x)\s*("[^"]*"?|'[^']*'?|\S+)/g)) {
+      out.push(unquote(m[1] ?? ""));
+    }
+  } else if (sub === "bisect" || sub === "submodule") {
+    const at = rest.findIndex((w) => w.toLowerCase() === (sub === "bisect" ? "run" : "foreach"));
+    if (at >= 0) {
+      const tail = rest.slice(at + 1).filter((w, i) => !(i === 0 && w === "--recursive"));
+      out.push(unquote(tail.join(" ")));
+    }
+  }
+  return out;
+}
+
+/** `rg --pre <cmd>` runs a program on every file it searches. */
+const rgRunsPre = (rest: string[]): boolean =>
+  rest.some((w) => w === "--pre" || w.startsWith("--pre="));
 
 function gitSubcommand(rest: string[]): string | null {
   for (let i = 0; i < rest.length; i++) {
@@ -281,6 +340,8 @@ function segmentWrites(seg: string, out: string[]): void {
   const rest = words.slice(ni + 1);
   const mentions = mentionsIn(seg);
   if (mentions.length > 0) {
+    // A substitution, a git exec form or `rg --pre` runs code even in a data-argument command.
+    let runsCode = substitutions(seg).length > 0;
     if (DEST_ONLY.has(name)) {
       const dest = destinationOf(rest);
       const hit = dest === null ? null : tokenMention(dest);
@@ -296,10 +357,15 @@ function segmentWrites(seg: string, out: string[]): void {
       if (sub !== null && GIT_WRITE.has(sub) && (sub !== "restore" || gitRestoreWrites(rest))) {
         out.push(...mentions);
       }
+      const nested = gitNestedCommands(seg, rest, sub);
+      if (nested.length > 0) runsCode = true;
+      for (const n of nested) out.push(...shellWriteTargets(n));
+    } else if (name === "rg" && rgRunsPre(rest)) {
+      out.push(...mentions);
     } else if (ALL_MENTIONS.has(name)) {
       out.push(...mentions);
     }
-    if (mayRunWriteApi(name, rest) && WRITE_API_RE.test(seg)) out.push(...mentions);
+    if ((runsCode || mayRunWriteApi(name, rest)) && WRITE_API_RE.test(seg)) out.push(...mentions);
   }
   if (NESTED_SHELLS.has(name)) {
     const at = rest.findIndex((w) => ["-c", "/c", "-command"].includes(w.toLowerCase()));
@@ -311,6 +377,7 @@ function segmentWrites(seg: string, out: string[]): void {
 export function shellWriteTargets(command: string): string[] {
   const out: string[] = [];
   for (const seg of shellSegments(command)) segmentWrites(seg, out);
+  for (const body of substitutions(command)) out.push(...shellWriteTargets(body));
   return [...new Set(out)];
 }
 

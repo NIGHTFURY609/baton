@@ -158,6 +158,72 @@ describe("shellWriteTargets", () => {
     expect(shellWriteTargets(cmd)).toEqual([]);
   });
 
+  // bt-2a8: data-argument commands that still run code.
+  const codeDeny: [string, string][] = [
+    [`echo $(node -e "require('fs').writeFileSync('.context/STATE.md','x')")`, "state"],
+    ["echo `node -e \"require('fs').writeFileSync('.context/STATE.md','x')\"`", "state"],
+    [`printf %s "$(node -e "require('fs').writeFileSync('.context/tasks.jsonl','')")"`, "tasks"],
+    [`grep x "$(python -c "open('.context/memories.jsonl','w')")"`, "memories"],
+    ["echo $(rm .context/STATE.md)", "state"],
+    ["echo `rm -rf .context`", "context-dir"],
+    [
+      `git rebase --exec "node -e \\"require('fs').writeFileSync('.context/STATE.md','x')\\"" HEAD~1`,
+      "state",
+    ],
+    [
+      `git rebase -x "node -e \\"require('fs').writeFileSync('.context/STATE.md','x')\\"" HEAD~1`,
+      "state",
+    ],
+    ["git rebase --exec 'rm .context/tasks.jsonl' HEAD~2", "tasks"],
+    ["git rebase --exec='rm .context/tasks.jsonl' HEAD~2", "tasks"],
+    [`git bisect run node -e "require('fs').writeFileSync('.context/STATE.md','x')"`, "state"],
+    ["git bisect run rm .context/STATE.md", "state"],
+    [
+      `git submodule foreach "node -e \\"require('fs').unlinkSync('../.context/tasks.jsonl')\\""`,
+      "tasks",
+    ],
+    ["git submodule foreach --recursive 'rm ../.context/STATE.md'", "state"],
+    [
+      `git -c alias.x='!node -e "require(\\"fs\\").writeFileSync(\\".context/STATE.md\\",\\"x\\")"' x`,
+      "state",
+    ],
+    ["git -c alias.x='!rm .context/memories.jsonl' x", "memories"],
+    [`rg --pre ./pre.sh "writeFileSync" .context/STATE.md`, "state"],
+    ["rg --pre rm x .context/STATE.md", "state"],
+    ["rg --pre=./wipe.sh x .context/tasks.jsonl", "tasks"],
+    [`php -r "file_put_contents('.context/STATE.md', 'x');"`, "state"],
+    [`php -r "fopen('.context/tasks.jsonl', 'w');"`, "tasks"],
+    // Fail-safe: inside double quotes $(…) is a real substitution in bash.
+    ['git commit -m "guards: scan $(…) for writeFileSync" -- .context/tasks.jsonl', "tasks"],
+  ];
+  it.each(codeDeny)("denies code in a data command: %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const codeAllow = [
+    'git commit -m "fix writeFile race" -- src/a.ts .context/tasks.jsonl',
+    'git commit -m "guards: deny Set-Content and Out-File" -- src/hooks/guards.ts .context/tasks.jsonl',
+    'grep -rn "writeFileSync" .context/',
+    'rg "Remove-Item" .context/knowledge .context/decisions',
+    "git restore --staged .context/tasks.jsonl",
+    'git log -S "writeFile" -- .context/tasks.jsonl',
+    "git commit -m 'docs: explain $(…) handling' -- .context/tasks.jsonl",
+    "git commit -m 'guards: scan $(…) for writeFileSync' -- .context/tasks.jsonl",
+    "git commit -m 'guards: name `writeFileSync` in the scan' -- .context/tasks.jsonl",
+    'git commit -m "$(cat msg.txt)" -- .context/tasks.jsonl',
+    'git -c core.autocrlf=false commit -m "fix writeFile race" -- .context/tasks.jsonl',
+    "git rebase main -- .context/tasks.jsonl",
+    'git bisect good -- .context/STATE.md "writeFile"',
+    "git submodule status -- .context",
+    "rg --pre-glob '*.gz' \"writeFile\" .context/",
+    "echo $(cat .context/STATE.md)",
+  ];
+  it.each(codeAllow)("allows data in a data command: %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
   it("normalises a quoted ./ mention and is repeatable", () => {
     const cmd = 'echo x > "./.context/STATE.md"';
     expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);

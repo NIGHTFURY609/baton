@@ -25,8 +25,10 @@ Short list for whoever touches hooks. Sources and verification status: docs/rese
   - formatters given explicit paths (`prettier --write ".context/**/*.md"`);
   - `find .context/.cache -delete`;
   - over-deny: a `sed` regex such as `.c[…]` reads as a glob mention, and so does a mention of another repo's `.context/`;
+  - over-deny, by choice: a `$(` or backtick outside single quotes turns the write-API scan on for its whole segment, so a double-quoted message such as `git commit -m "scan $(…) for writeFileSync" -- .context/tasks.jsonl` is denied (bash runs that substitution), and so is a PowerShell backtick escape next to a write-API name; single quotes keep it allowed (bt-2a8);
   - `>|`, `patch X < d`, `cp -t .context/ x`, `cp -r backup/.context .`, `git stash push -- …` and `git apply`;
   - script APIs it does not name: pathlib `write_text`, `WriteAllTextAsync`, `[IO.File]::Create`, `os.removedirs`;
+  - code git or sed runs from elsewhere: an alias set earlier with `git config alias.x '!…'`, `git -c core.pager|core.editor|core.sshCommand|diff.external=…`, `git filter-branch --tree-filter`, `git difftool --extcmd`, `find -exec`, and the `sed` `e` command (`rebase --exec`, `bisect run`, `submodule foreach`, `-c alias.*=!…` and `rg --pre` are guarded);
   - path spellings: MSYS `/n/...`, 8.3 short names (`CONTEX~1`), UNC admin shares;
   - quote splicing and globs: `.con""text`, `rm -rf .*`, `.?ontext`, `.[c]ontext`, `*context`.
   Formatters are the likeliest real-world hit: excluding `.context/` from `.prettierignore` and the Biome ignores (a candidate for `baton init` to add) closes that gap.
