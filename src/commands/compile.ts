@@ -1,5 +1,10 @@
 import type { Command } from "commander";
-import { applyCompile, type CompileFile, planCompile } from "../core/compile.js";
+import {
+  applyCompile,
+  type CompileFile,
+  HAND_WRITTEN_MESSAGE,
+  planCompile,
+} from "../core/compile.js";
 import { BatonError, ExitCode } from "../core/errors.js";
 import { action, projectRoot, requireContext } from "./_shared.js";
 
@@ -7,7 +12,8 @@ import { action, projectRoot, requireContext } from "./_shared.js";
  * Regenerate AGENTS.md from the marked sections of .context/rules.md with the
  * embedded router template (at most 60 lines, ADR 0006), and ensure CLAUDE.md
  * imports it with `@AGENTS.md` (ADR 0022). It writes no other rule files.
- * --check writes nothing and exits 2 on drift (CI).
+ * --check writes nothing and exits 2 on drift (CI). A hand-written AGENTS.md (no
+ * generated header) is never replaced without --force.
  */
 export function registerCompile(program: Command): void {
   program
@@ -16,8 +22,9 @@ export function registerCompile(program: Command): void {
       "regenerate AGENTS.md from .context/rules.md and make CLAUDE.md import it (@AGENTS.md)",
     )
     .option("--check", "exit 2 if AGENTS.md or CLAUDE.md is out of date; write nothing")
+    .option("--force", "replace a hand-written AGENTS.md")
     .action(
-      action(async (opts: { check?: boolean }) => {
+      action(async (opts: { check?: boolean; force?: boolean }) => {
         const root = await projectRoot();
         requireContext(root);
         const { files, warnings } = await planCompile(root);
@@ -34,7 +41,7 @@ export function registerCompile(program: Command): void {
           process.stdout.write("AGENTS.md and CLAUDE.md are up to date\n");
           return;
         }
-        applyCompile(root, files);
+        applyCompile(root, files, { force: opts.force === true });
         for (const f of files) process.stdout.write(`${doneMessage(f)}\n`);
       }),
     );
@@ -42,6 +49,7 @@ export function registerCompile(program: Command): void {
 
 function driftMessage(f: CompileFile): string {
   if (f.path === "AGENTS.md") {
+    if (f.handWritten) return HAND_WRITTEN_MESSAGE;
     return f.action === "create"
       ? "AGENTS.md is missing"
       : `AGENTS.md is out of date with .context/rules.md (first difference at line ${f.firstDiff})`;
