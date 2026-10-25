@@ -105,6 +105,11 @@ describe("shellWriteTargets", () => {
     [`node -e "require('fs').rmSync('.context/STATE.md')"`, "state"],
     [`node -e "require('fs').unlinkSync('.context/tasks.jsonl')"`, "tasks"],
     [`python -c "import os; os.remove('.context/STATE.md')"`, "state"],
+    ["git restore .context/tasks.jsonl", "tasks"],
+    ["git restore --staged --worktree .context/tasks.jsonl", "tasks"],
+    ["git restore -SW .context/STATE.md", "state"],
+    [`deno eval "Deno.writeFileSync('.context/STATE.md', x)"`, "state"],
+    [`ruby -e "File.rename('a', '.context/STATE.md')"`, "state"],
   ];
   it.each(deny)("denies %s", (cmd, rule) => {
     const hits = shellWriteTargets(cmd);
@@ -138,6 +143,16 @@ describe("shellWriteTargets", () => {
     "cat .context/*.md",
     "ls .c*",
     "ls .context/knowledge/*.md",
+    'git commit -m "fix writeFile race" -- src/a.ts .context/tasks.jsonl',
+    'git commit -m "guards: deny Set-Content and Out-File" -- src/hooks/guards.ts .context/tasks.jsonl',
+    'grep -rn "writeFileSync" .context/',
+    'rg "Remove-Item" .context/knowledge .context/decisions',
+    'egrep "appendFile" .context/STATE.md',
+    'Select-String -Pattern "WriteAllText" .context\\STATE.md',
+    'echo "New-Item" .context/STATE.md',
+    'node dist/baton.mjs task create "fix writeFile in .context/tasks.jsonl"',
+    "git restore --staged .context/tasks.jsonl",
+    "git restore -S .context/STATE.md",
   ];
   it.each(allow)("allows %s", (cmd) => {
     expect(shellWriteTargets(cmd)).toEqual([]);

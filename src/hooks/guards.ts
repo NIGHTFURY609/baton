@@ -192,6 +192,40 @@ const ALL_MENTIONS = new Set(
 );
 const GIT_WRITE = new Set(["checkout", "restore", "rm", "mv"]);
 const NESTED_SHELLS = new Set(["bash", "sh", "zsh", "cmd", "pwsh", "powershell"]);
+/** Commands whose arguments can be a script that calls a write API. */
+const SCRIPT_HOSTS = new Set([
+  "node",
+  "deno",
+  "bun",
+  "python",
+  "python3",
+  "py",
+  "perl",
+  "ruby",
+  "php",
+  "pwsh",
+  "powershell",
+]);
+/**
+ * Known commands whose arguments are data, not code: a write-API name there is a search
+ * pattern, a message or text to print. Their real writes are handled by the rules above.
+ */
+const DATA_ARG_COMMANDS = new Set([
+  ...DEST_ONLY,
+  ...ALL_MENTIONS,
+  "git",
+  "sed",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "findstr",
+  "select-string",
+  "sls",
+  "echo",
+  "printf",
+  "baton",
+]);
 const WRITE_API_RE =
   /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Set-Content|Add-Content|Out-File|Tee-Object|New-Item|Remove-Item|Move-Item|Clear-Content)\b|\b(?:rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile)\s*\(|(?:File|Directory)\]::(?:Delete|Move|Copy)\b|\bos\.(?:remove|unlink|rename)\b|\bshutil\.|\bopen\s*\([^)]*['"][wax]\+?['"]/i;
 
@@ -203,6 +237,26 @@ function gitSubcommand(rest: string[]): string | null {
     else return w.toLowerCase();
   }
   return null;
+}
+
+/** `git restore` writes the working tree unless it is limited to the index (`--staged` alone). */
+function gitRestoreWrites(rest: string[]): boolean {
+  const short = (letter: string) => (w: string) => /^-[A-Za-z]+$/.test(w) && w.includes(letter);
+  const staged = rest.some((w) => w === "--staged" || short("S")(w));
+  const worktree = rest.some((w) => w === "--worktree" || short("W")(w));
+  return !staged || worktree;
+}
+
+/**
+ * Whether a write-API name in this command can be code: a script host (except baton's
+ * own CLI) or anything that is not a known command, such as a PowerShell
+ * `[IO.File]::…` expression.
+ */
+function mayRunWriteApi(name: string, rest: string[]): boolean {
+  if (SCRIPT_HOSTS.has(name)) {
+    return !(name === "node" && /(?:^|\/)baton\.mjs$/i.test(unquote(rest[0] ?? "")));
+  }
+  return !DATA_ARG_COMMANDS.has(name);
 }
 
 function destinationOf(rest: string[]): string | null {
@@ -239,11 +293,13 @@ function segmentWrites(seg: string, out: string[]): void {
       if (rest.some((w) => /^-\w*i/.test(w))) out.push(...mentions);
     } else if (name === "git") {
       const sub = gitSubcommand(rest);
-      if (sub !== null && GIT_WRITE.has(sub)) out.push(...mentions);
+      if (sub !== null && GIT_WRITE.has(sub) && (sub !== "restore" || gitRestoreWrites(rest))) {
+        out.push(...mentions);
+      }
     } else if (ALL_MENTIONS.has(name)) {
       out.push(...mentions);
     }
-    if (WRITE_API_RE.test(seg)) out.push(...mentions);
+    if (mayRunWriteApi(name, rest) && WRITE_API_RE.test(seg)) out.push(...mentions);
   }
   if (NESTED_SHELLS.has(name)) {
     const at = rest.findIndex((w) => ["-c", "/c", "-command"].includes(w.toLowerCase()));
