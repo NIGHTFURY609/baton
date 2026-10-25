@@ -218,13 +218,27 @@ function npmScriptNames(root: string): Set<string> | undefined {
   }
 }
 
+/** Ids of every task the snapshot holds (in progress, ready, blocked, recently closed, epics). */
+function snapshotTaskIds(s: TaskSnapshot): Set<string> {
+  const ids = new Set<string>();
+  for (const t of [...s.inProgress, ...s.ready, ...s.recentlyClosed, ...s.openEpics]) ids.add(t.id);
+  for (const b of s.blocked) {
+    ids.add(b.task.id);
+    for (const id of b.blockedBy) ids.add(id);
+  }
+  return ids;
+}
+
 /**
  * The words a shell summary may show besides command names (ADR 0024): the native task id
- * prefix and the package.json script names.
+ * prefix with the ids of the tasks the snapshot read, and the package.json script names.
  */
-function knownShellWords(root: string, config: Config): ShellKnownWords {
+function knownShellWords(root: string, config: Config, snapshot: TaskSnapshot): ShellKnownWords {
   const known: ShellKnownWords = {};
-  if (config.tasks.backend === "native") known.taskPrefix = resolvePrefix(root, config);
+  if (config.tasks.backend === "native") {
+    known.taskPrefix = resolvePrefix(root, config);
+    known.taskIds = snapshotTaskIds(snapshot);
+  }
   const scripts = npmScriptNames(root);
   if (scripts !== undefined) known.npmScripts = scripts;
   return known;
@@ -267,16 +281,21 @@ export async function gatherHandoff(
       return "";
     }
   });
+  const snapshotP = readTaskSnapshot(root, config, {
+    readyLimit: HANDOFF_LIMITS.ready,
+    closedLimit: HANDOFF_LIMITS.closed,
+  });
+  // Shell summaries may show only ids of tasks this snapshot read (ADR 0024).
+  const transcriptP = snapshotP.then((s) =>
+    readToolCalls(root, opts, knownShellWords(root, config, s)),
+  );
   const [head, branch, status, stat, snapshot, transcript] = await Promise.all([
     headP,
     git ? currentBranch(root) : Promise.resolve(null),
     git ? statusLines(root) : Promise.resolve([] as string[]),
     statP,
-    readTaskSnapshot(root, config, {
-      readyLimit: HANDOFF_LIMITS.ready,
-      closedLimit: HANDOFF_LIMITS.closed,
-    }),
-    readToolCalls(root, opts, knownShellWords(root, config)),
+    snapshotP,
+    transcriptP,
   ]);
   return {
     generatedAt: (opts.now ?? new Date()).toISOString(),

@@ -431,20 +431,6 @@ const isDoubleQuote = (c: string, ps: boolean): boolean =>
 const isSingleQuote = (c: string, ps: boolean): boolean =>
   c === "'" || (ps && (c === "‘" || c === "’" || c === "‚" || c === "‛"));
 
-/** Words after which a Bash `case` still starts a command (`then case …`). */
-const CASE_LEADERS = new Set([
-  "if",
-  "then",
-  "else",
-  "elif",
-  "do",
-  "while",
-  "until",
-  "!",
-  "{",
-  "time",
-]);
-
 /** Whether a Bash `case` keyword starts at `i` (after a separator, before a blank). */
 function startsCase(line: string, i: number): boolean {
   return (
@@ -555,15 +541,15 @@ function shellParts(line: string, dialect: ShellDialect): ShellPart[] {
       // Stop-parsing token: what follows is passed on verbatim, so the scan ends here.
       word = line.slice(i);
       break;
+    } else if (!ps && word === "case" && /[\s;&|]/.test(c)) {
+      // An unquoted `case` word, wherever it stands (`f() case`, `coproc case`, `echo case;`):
+      // a case statement's patterns and `;;` are not commands, so the rest of the line is one
+      // opaque argument.
+      endWord();
+      const rest = line.slice(i).trim();
+      if (rest !== "") words.push(rest);
+      break;
     } else if (/\s/.test(c)) {
-      if (!ps && word === "case" && words.every((w) => CASE_LEADERS.has(w))) {
-        // A `case` statement: its patterns and `;;` are not commands, so the rest of the
-        // line is one opaque argument.
-        endWord();
-        const rest = line.slice(i + 1).trim();
-        if (rest !== "") words.push(rest);
-        break;
-      }
       endWord();
       continue;
     } else if (c === "&" && (prev === ">" || prev === "<" || next === ">")) {
@@ -593,6 +579,8 @@ const SCRIPT_NAME = /^[\w:.-]+$/;
 export interface ShellKnownWords {
   /** The native task id prefix (`bt`); without it no task id is shown. */
   taskPrefix?: string;
+  /** Ids of the tasks the store returned; a task id is shown only if it is one of them. */
+  taskIds?: ReadonlySet<string>;
   /** Script names of the root package.json; without them no `npm run` script is shown. */
   npmScripts?: ReadonlySet<string>;
 }
@@ -730,9 +718,9 @@ function gitShown(rest: string[]): string[] {
 
 /**
  * The words shown for baton: a known command, a group's known action, then a task id for
- * the commands that take one, when the word is a task id with the project's prefix.
+ * the commands that take one, when the word is a task of the store with the project's prefix.
  */
-function batonShown(rest: string[], taskPrefix: string | undefined): string[] {
+function batonShown(rest: string[], known: ShellKnownWords): string[] {
   const sub = rest[0] ?? "";
   const shown = [sub];
   const group = BATON_GROUPS.get(sub);
@@ -746,7 +734,10 @@ function batonShown(rest: string[], taskPrefix: string | undefined): string[] {
     return [];
   }
   const id = rest[shown.length] ?? "";
-  if (takesId && taskPrefix !== undefined && isTaskIdShape(id, taskPrefix)) shown.push(id);
+  const { taskPrefix, taskIds } = known;
+  if (takesId && taskPrefix !== undefined && taskIds?.has(id) && isTaskIdShape(id, taskPrefix)) {
+    shown.push(id);
+  }
   return shown;
 }
 
@@ -778,11 +769,11 @@ function summarizeShellPart(
   const firstArg = (rest[0] ?? "").replace(/\\/g, "/");
   if (cmd === "node" && /(?:^|\/)baton\.mjs$/i.test(firstArg)) {
     const args = rest.slice(1);
-    const shown = batonShown(args, known.taskPrefix);
+    const shown = batonShown(args, known);
     return withCount(["baton", ...shown], args.length - shown.length);
   }
   if (cmd === "baton" || cmd === "baton.mjs") {
-    const shown = batonShown(rest, known.taskPrefix);
+    const shown = batonShown(rest, known);
     return withCount(["baton", ...shown], rest.length - shown.length);
   }
   if (cmd === "git") {
@@ -814,8 +805,8 @@ function scannedLine(command: string): { line: string; cut: boolean } {
 /**
  * A shell command line as command names only (ADR 0024): each simple command shows its
  * name, plus the subcommand for `git <sub>` (a built-in subcommand), `npm run <script>` (a
- * script of `known.npmScripts`) and `baton <sub> [<action>] [task-id]` (an id with
- * `known.taskPrefix`), plus `(+N args)`. Arguments never appear, so no secret or path in
+ * script of `known.npmScripts`) and `baton <sub> [<action>] [task-id]` (an id of
+ * `known.taskIds` with `known.taskPrefix`), plus `(+N args)`. Arguments never appear, so no secret or path in
  * them reaches STATE.md. Without a dialect, both grammars must agree, or the whole line
  * shows as `(expression)`.
  */

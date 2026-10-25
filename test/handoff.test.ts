@@ -288,7 +288,11 @@ describe("gatherHandoff and runHandoff", () => {
   it("shows only this project's task ids and package.json scripts", async () => {
     const { root, transcriptPath } = await gitFixture();
     const config = await loadConfig(root);
-    const id = `${resolvePrefix(root, config)}-abc`;
+    const first = await gatherHandoff(root, config, { reason: "manual", transcriptPath });
+    const id = first.snapshot.inProgress[0]?.id ?? "";
+    expect(id.startsWith(`${resolvePrefix(root, config)}-`)).toBe(true);
+    // Has the prefix and the id shape, but is no task of this store.
+    const unknown = `${resolvePrefix(root, config)}-zzzzz`;
     writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { check: "vitest" } }));
     writeFileSync(
       transcriptPath,
@@ -297,6 +301,7 @@ describe("gatherHandoff and runHandoff", () => {
         toolUse("s2", "Bash", { command: "npm run my-api-key" }),
         toolUse("s3", "Bash", { command: `baton verify ${id}` }),
         toolUse("s4", "Bash", { command: "baton verify my-secret" }),
+        toolUse("s5", "Bash", { command: `baton task show ${unknown}` }),
       ]),
     );
     const { text } = await runHandoff(root, config, {
@@ -308,7 +313,8 @@ describe("gatherHandoff and runHandoff", () => {
     expect(text).toContain("- Bash: npm run (+1 args)\n");
     expect(text).toContain(`- Bash: baton verify ${id}\n`);
     expect(text).toContain("- Bash: baton verify (+1 args)\n");
-    for (const secret of ["my-api-key", "my-secret"]) expect(text).not.toContain(secret);
+    expect(text).toContain("- Bash: baton task show (+1 args)\n");
+    for (const secret of ["my-api-key", "my-secret", unknown]) expect(text).not.toContain(secret);
   });
 
   it("writes, then is idempotent", async () => {

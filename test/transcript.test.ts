@@ -20,7 +20,11 @@ import { makeTempDir } from "./helpers/repo.js";
 import { toJsonl, toolResult, toolUse } from "./helpers/transcript.js";
 
 /** What handoff passes for this repo: the task id prefix and the package.json script names. */
-const KNOWN = { taskPrefix: "bt", npmScripts: new Set(["check", "build", "deploy"]) };
+const KNOWN = {
+  taskPrefix: "bt",
+  taskIds: new Set(["bt-abc", "bt-a3f", "bt-a3f.1", "bt-vyr.2", "bt-w2a", "bt-bk4"]),
+  npmScripts: new Set(["check", "build", "deploy"]),
+};
 
 const jsonl = readFileSync(new URL("./fixtures/transcript.jsonl", import.meta.url), "utf8");
 
@@ -397,6 +401,38 @@ describe("shell tool-call summaries: command names only", () => {
     expect(bare("Bash", "baton verify bt-abc")).toBe("Bash: baton verify (+1 args)");
     expect(one("Bash", "npm run check")).toBe("Bash: npm run check");
     expect(bare("Bash", "npm run check")).toBe("Bash: npm run (+1 args)");
+  });
+
+  // Fix round 2 (re-review of bt-bk4).
+  it.each([
+    // An unquoted `case` word hides the rest of the line, whatever precedes it.
+    ["Bash", "f() case $x in a|hunter2 ) echo;; esac", "Bash: (expression)"],
+    ["Bash", "function f case $x in a|hunter2 ) echo;; esac", "Bash: function (+3 args)"],
+    ["Bash", "coproc case $x in a|hunter2 ) echo;; esac", "Bash: coproc (+2 args)"],
+    ["Bash", "time -p case $x in a|hunter2 ) echo;; esac", "Bash: (expression)"],
+    ["Bash", "echo case; ls", "Bash: echo (+2 args)"],
+    // A task id shows only when it is a task of the store, not just prefix-shaped.
+    ["Bash", "baton verify bt-hunter2", "Bash: baton verify (+1 args)"],
+    ["Bash", "baton verify bt-secret1", "Bash: baton verify (+1 args)"],
+    ["Bash", "baton task close bt-hunter2 --reason x", "Bash: baton task close (+3 args)"],
+  ])("%s %s shows no argument word (review round 2)", (tool, command, expected) => {
+    const out = one(tool, command);
+    expect(out).toBe(expected);
+    expect(out).not.toMatch(/hunter|secret/);
+  });
+
+  it("shows a task id only from the known id set", () => {
+    const prefixOnly = (command: string) =>
+      recentToolCalls(
+        parseTranscript(toJsonl([toolUse("s", "Bash", { command })])).records,
+        "c:\\work\\demo",
+        1,
+        "win32",
+        { taskPrefix: "bt" },
+      )[0];
+    expect(one("Bash", "baton verify bt-bk4")).toBe("Bash: baton verify bt-bk4");
+    expect(prefixOnly("baton verify bt-bk4")).toBe("Bash: baton verify (+1 args)");
+    expect(bare("Bash", "baton verify bt-bk4")).toBe("Bash: baton verify (+1 args)");
   });
 });
 
