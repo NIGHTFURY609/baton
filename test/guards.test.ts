@@ -313,6 +313,85 @@ describe("shellWriteTargets", () => {
     }
   });
 
+  // bt-2a8 fix round 2.
+  const NW = "require('fs').writeFileSync('.context/STATE.md','x')";
+  const RM = "rm .context/STATE.md";
+  const round2Deny: [string, string][] = [
+    // R1: a quoted heredoc body is blanked only inside git commit/tag, gh, echo or printf.
+    [`cat <<'EOF' | bash\n${RM}\nEOF`, "state"],
+    [`cat <<'EOF' | sh\n${RM}\nEOF`, "state"],
+    [`cat <<'EOF' | node\n${NW}\nEOF`, "state"],
+    [`bash -c "$(cat <<'EOF'\n${RM}\nEOF\n)"`, "state"],
+    [`node -e "$(cat <<'EOF'\n${NW}\nEOF\n)"`, "state"],
+    [`eval "$(cat <<'EOF'\n${RM}\nEOF\n)"`, "state"],
+    [`source <(cat <<'EOF'\n${RM}\nEOF\n)`, "state"],
+    [`bash <(cat <<'EOF'\n${RM}\nEOF\n)`, "state"],
+    [`echo "$(cat <<'EOF'\n${RM}\nEOF\n)" | bash`, "state"],
+    [`bash -c "$(echo "$(cat <<'EOF'\n${RM}\nEOF\n)")"`, "state"],
+    [`git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)" && ${RM}`, "state"],
+    [`echo $(cat <<'EOF'\nx\nEOF\n) $(${RM})`, "state"],
+    // Fail safe by choice: outside the narrow form a quoted heredoc body is read as code.
+    [`cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF`, "state"],
+    // Quotes in a heredoc body do not hide what follows it.
+    [`cat <<'EOF'\ndon't\nEOF\necho $(${RM})`, "state"],
+    [`cat <<EOF\ndon't $(${RM})\nEOF`, "state"],
+    // R2: quotes are read on the raw text; only a real backslash escapes.
+    [`echo src/'a' $(node -e "${NW}")`, "state"],
+    [`echo a/'b' \`${RM}\``, "state"],
+    [`ls src/'x y' $(${RM})`, "state"],
+    [`grep x ./'my file' <(node -e "${NW}")`, "state"],
+    [`echo "a/" $(${RM})`, "state"],
+    // Folded: an escaped space in an unquoted rebase exec command.
+    [`git rebase -x rm\\ .context/STATE.md HEAD~2`, "state"],
+    [`git rebase --exec rm\\ .context/STATE.md HEAD~2`, "state"],
+    [`git rebase -xrm\\ .context/STATE.md HEAD~2`, "state"],
+  ];
+  it.each(round2Deny)("denies (round 2) %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const round2Allow = [
+    `gh pr create --title x --body "$(cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF\n)"`,
+    `echo "$(cat <<'EOF'\n${RM}\nEOF\n)"`,
+    `printf '%s\\n' "$(cat <<'EOF'\n${RM}\nEOF\n)" > notes.md`,
+    `git tag -a v1 -m "$(cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF\n)"`,
+    `git commit -m "$(cat <<'EOF'\nfix (a) b) c: \`${RM}\` and don't\nEOF\n)" -- .context/tasks.jsonl`,
+  ];
+  it.each(round2Allow)("allows (round 2) %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
+  it("denies inside the work budget whatever the input (round 2)", () => {
+    const fillTo = (pre: string, unit: string, post: string): string =>
+      pre + unit.repeat(Math.floor((16_383 - pre.length - post.length) / unit.length)) + post;
+    const W = `${RM}; `;
+    const cases = [
+      fillTo(`${W}echo $(echo $(echo $(echo $(echo $(rm `, "=:", "))))) .context/STATE.md"),
+      fillTo(`${W}bash -c "echo $(bash -c "echo $(bash -c "echo $(echo `, "=:", ')")")"'),
+      fillTo(`${W}echo $(bash -c "echo $(bash -c "echo `, "=:", '")")'),
+      fillTo(`${W}echo ( $( ( $( ( `, "=:", " ) ) ) ) )"),
+      fillTo(`${W}x=$(y=$(z=$(w=$(v=$(`, "=:", ")))))"),
+      fillTo(`${W}git -c alias.x=!$(git -c alias.y=!$(echo $(echo `, "=:", "))) x"),
+      fillTo(`${W}git rebase -x "$(git rebase -x "$(echo $(echo `, "=:", '))")"'),
+      fillTo(`${W}cat <(echo >(echo $(echo $(rm `, "=:", "))))"),
+      fillTo(`${W}git submodule foreach "$(git submodule foreach "$(echo $(echo `, "=:", '))")"'),
+      fillTo(`${W}cat $(cat $(cat $(cat $(cat $(cat `, "<<'E' ", ")))))"),
+      fillTo(`${W}bash -c "cat $(bash -c "cat $(bash -c "cat $(cat `, "<<'E' ", ')")")"'),
+      fillTo(`${W}cat `, "<<'E' ", ""),
+      fillTo(`${W}cat `, "<<-\\E ", ""),
+      fillTo("echo $(echo ", "=:", ") .context/STATE.md; rm .context/STATE.md"),
+    ];
+    let worst = 0;
+    for (const cmd of cases) {
+      const t = performance.now();
+      expect(shellWriteTargets(cmd)).toContain(".context/STATE.md");
+      worst = Math.max(worst, performance.now() - t);
+    }
+    expect(worst).toBeLessThan(1000);
+  });
+
   it("normalises a quoted ./ mention and is repeatable", () => {
     const cmd = 'echo x > "./.context/STATE.md"';
     expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
@@ -459,6 +538,20 @@ describe("checkToolCall", () => {
     // In PowerShell a backslash escapes nothing, so this subexpression runs.
     expect(ps('Write-Output "x\\$(Set-Content .context\\STATE.md x)"')).toBe("state");
     expect(rule("Bash", { command: 'echo "x\\$(rm .context/STATE.md)"' })).toBeNull();
+    // Round 2: a backslash before a quote ends a PowerShell string; the backtick escapes.
+    expect(ps('echo "C:\\" (Set-Content .context\\STATE.md x)')).toBe("state");
+    expect(ps("echo 'C:\\' (Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(ps('Write-Output "`$(x)" $(Set-Content .context\\STATE.md x)')).toBe("state");
+    expect(ps("Write-Output 'it''s' $(Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(ps("@'\nit's\n'@ | Out-Null; echo $(Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(
+      ps('git commit -m "guards: deny writeFileSync`n`nbody" -- .context\\tasks.jsonl'),
+    ).toBeNull();
+    // Gemini's run_shell_command is read as Bash and as PowerShell; either deny wins.
+    const gem = (command: string) => rule("run_shell_command", { command });
+    expect(gem('Write-Output "x\\$(Set-Content .context\\STATE.md x)"')).toBe("state");
+    expect(gem("echo `rm .context/STATE.md`")).toBe("state");
+    expect(gem('git commit -m "fix writeFile race" -- src/a.ts .context/tasks.jsonl')).toBeNull();
   });
 
   it("covers decision records by status", () => {

@@ -20,15 +20,15 @@ Short list for whoever touches hooks. Sources and verification status: docs/rese
 - PreToolUse `deny` reasons reach the model; `ask` reasons reach only the user. Deny, never ask, when the model must change course.
 - Stop: `decision: "block"` keeps Claude working. Skip when `stop_hook_active` is true; Claude Code ends the turn after 8 blocks in a row anyway.
 - Windows sessions have a `PowerShell` tool as well as `Bash`; guard both.
-- The shell guard (`src/hooks/guards.ts`, ADR 0025) reads the command text; it tracks quotes only to find substitutions. Known gaps it leaves open, most likely first for a cooperative agent:
+- The shell guard (`src/hooks/guards.ts`, ADR 0026) reads the command text; it tracks quotes and escapes on the raw text only to find the code a command runs inline. Known gaps it leaves open, most likely first for a cooperative agent:
   - a `cd .context` in an earlier call, then a relative `rm STATE.md` (the shell's cwd persists between calls);
   - formatters given explicit paths (`prettier --write ".context/**/*.md"`);
   - `find .context/.cache -delete`;
   - over-deny: a `sed` regex such as `.c[…]` reads as a glob mention, and so does a mention of another repo's `.context/`;
-  - over-deny, by choice: a substitution outside single quotes turns the write-API scan on for its whole segment, so a double-quoted message such as `git commit -m "scan $(…) for writeFileSync" -- .context/tasks.jsonl` is denied (bash runs that substitution), and so is a PowerShell backtick escape next to a write-API name; single quotes, `\$(`, or a quoted heredoc (`$(cat <<'EOF' …)`) keep it allowed. A command over 16 KB that mentions a protected path is denied unscanned, and so is protected text more than 4 substitution levels deep next to a write command (bt-2a8);
+  - over-deny, by choice: a substitution outside single quotes turns the write-API scan on for its whole segment, so a double-quoted message such as `git commit -m "scan $(…) for writeFileSync" -- .context/tasks.jsonl` is denied (bash runs that substitution); single quotes, `\$(`, or the message heredoc `git commit|tag / gh / echo / printf … "$(cat <<'EOF' … EOF)"` keep it allowed. Any other quoted heredoc body is read as code, so `cat <<'EOF'` or `git commit -F - <<'EOF'` with a body that quotes `` `rm .context/STATE.md` `` is denied. A command over 16 KB, or one whose scan passes the 64 KiB work budget, is denied when it mentions a protected path, and so is protected text more than 4 substitution levels deep next to a write command (bt-2a8);
   - a `;` inside a `node -e` or `php -r` script splits the path from the write call (`node -e "const p='.context/STATE.md'; fs.writeFileSync(p,'x')"`);
   - bash 5.3 `${ …; }` command substitution;
-  - the shell dialect follows the tool name: Gemini's `run_shell_command` is read as Bash, so on a PowerShell host `"\$(…)"` is taken as an escaped, literal `$(`;
+  - paths read from stdin or a file list: `cat <<'EOF' | xargs rm`, `xargs rm < list.txt`;
   - `>|`, `patch X < d`, `cp -t .context/ x`, `cp -r backup/.context .`, `git stash push -- …` and `git apply`;
   - script APIs it does not name: pathlib `write_text`, `WriteAllTextAsync`, `[IO.File]::Create`, `os.removedirs`;
   - code git or sed runs from elsewhere: an alias set earlier with `git config alias.x '!…'`, `git -c core.pager|core.editor|core.sshCommand|diff.external=…`, `git filter-branch --tree-filter`, `git difftool --extcmd`, `find -exec`, and the `sed` `e` command (`rebase --exec`, `bisect run`, `submodule foreach`, `-c alias.*=!…` and `rg --pre` are guarded);
