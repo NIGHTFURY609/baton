@@ -4,17 +4,19 @@
  * idempotence rules: ADR 0024 (superseding ADRs 0015 and 0023).
  */
 
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { Config } from "./config.js";
 import { currentBranch, diffStat, headSha, isGitRepo, porcelainPath, statusLines } from "./git.js";
 import { contextPath } from "./paths.js";
 import { readTextOrEmpty, writeFileAtomic } from "./tasks/native/jsonl.js";
+import { resolvePrefix } from "./tasks/native/store.js";
 import { readTaskSnapshot, type TaskSnapshot } from "./tasks/snapshot.js";
 import {
   findProjectTranscriptDirs,
   listSessionTranscripts,
   readTranscriptTail,
   recentToolCalls,
+  type ShellKnownWords,
 } from "./transcript.js";
 import type { Task } from "./types.js";
 
@@ -203,9 +205,35 @@ export interface HandoffOptions {
   now?: Date;
 }
 
+/** Script names of the root package.json, or undefined when there are none to read. */
+function npmScriptNames(root: string): Set<string> | undefined {
+  try {
+    const pkg: unknown = JSON.parse(readTextOrEmpty(join(root, "package.json")) || "null");
+    const scripts =
+      pkg !== null && typeof pkg === "object" ? (pkg as { scripts?: unknown }).scripts : undefined;
+    if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) return undefined;
+    return new Set(Object.keys(scripts));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The words a shell summary may show besides command names (ADR 0024): the native task id
+ * prefix and the package.json script names.
+ */
+function knownShellWords(root: string, config: Config): ShellKnownWords {
+  const known: ShellKnownWords = {};
+  if (config.tasks.backend === "native") known.taskPrefix = resolvePrefix(root, config);
+  const scripts = npmScriptNames(root);
+  if (scripts !== undefined) known.npmScripts = scripts;
+  return known;
+}
+
 async function readToolCalls(
   root: string,
   opts: HandoffOptions,
+  known: ShellKnownWords,
 ): Promise<{ toolCalls: string[]; sessionId: string | null }> {
   try {
     let path = opts.transcriptPath;
@@ -216,7 +244,7 @@ async function readToolCalls(
     if (path === undefined) return { toolCalls: [], sessionId: null };
     const { records } = await readTranscriptTail(path, opts.tailBytes ?? 262_144);
     return {
-      toolCalls: recentToolCalls(records, root, HANDOFF_LIMITS.toolCalls),
+      toolCalls: recentToolCalls(records, root, HANDOFF_LIMITS.toolCalls, process.platform, known),
       sessionId: basename(path).replace(/\.jsonl$/, ""),
     };
   } catch {
@@ -248,7 +276,7 @@ export async function gatherHandoff(
       readyLimit: HANDOFF_LIMITS.ready,
       closedLimit: HANDOFF_LIMITS.closed,
     }),
-    readToolCalls(root, opts),
+    readToolCalls(root, opts, knownShellWords(root, config)),
   ]);
   return {
     generatedAt: (opts.now ?? new Date()).toISOString(),

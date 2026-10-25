@@ -19,6 +19,9 @@ import {
 import { makeTempDir } from "./helpers/repo.js";
 import { toJsonl, toolResult, toolUse } from "./helpers/transcript.js";
 
+/** What handoff passes for this repo: the task id prefix and the package.json script names. */
+const KNOWN = { taskPrefix: "bt", npmScripts: new Set(["check", "build", "deploy"]) };
+
 const jsonl = readFileSync(new URL("./fixtures/transcript.jsonl", import.meta.url), "utf8");
 
 describe("transcript", () => {
@@ -145,12 +148,12 @@ describe("tool-call summaries", () => {
   });
 
   it("summarises tool calls", () => {
-    expect(recentToolCalls(records, "c:\\work\\demo", 10, "win32")).toEqual([
+    expect(recentToolCalls(records, "c:\\work\\demo", 10, "win32", KNOWN)).toEqual([
       "Edit src/a.ts",
       "Bash: npm run check (failed)",
       "Read …/x.md",
     ]);
-    expect(recentToolCalls(records, "c:\\work\\demo", 2, "win32")).toEqual([
+    expect(recentToolCalls(records, "c:\\work\\demo", 2, "win32", KNOWN)).toEqual([
       "Bash: npm run check (failed)",
       "Read …/x.md",
     ]);
@@ -192,6 +195,7 @@ describe("shell tool-call summaries: command names only", () => {
       "c:\\work\\demo",
       1,
       "win32",
+      KNOWN,
     )[0];
 
   it.each([
@@ -205,9 +209,16 @@ describe("shell tool-call summaries: command names only", () => {
     ],
     ["Bash", "zip -r a.zip f -P secret", "Bash: zip (+5 args)", ["secret", "a.zip"]],
     [
+      "Bash",
+      "API_KEY=hunter2 npm run deploy -- --token abc",
+      "Bash: npm run deploy (+3 args)",
+      ["hunter2", "API_KEY", "abc"],
+    ],
+    // PowerShell reads `API_KEY=hunter2` as an expression, so the two grammars disagree.
+    [
       "run_shell_command",
       "API_KEY=hunter2 npm run deploy -- --token abc",
-      "run_shell_command: npm run deploy (+3 args)",
+      "run_shell_command: (expression)",
       ["hunter2", "API_KEY", "abc"],
     ],
     [
@@ -332,6 +343,60 @@ describe("shell tool-call summaries: command names only", () => {
     expect(out.length).toBeLessThanOrEqual(3 * 1024);
     expect(out.endsWith("…")).toBe(true);
     expect(ms).toBeLessThan(250);
+  });
+
+  // Fix round 1 (security review of bt-bk4).
+  const bare = (name: string, command: string) =>
+    recentToolCalls(
+      parseTranscript(toJsonl([toolUse("s", name, { command })])).records,
+      "c:\\work\\demo",
+      1,
+      "win32",
+    )[0];
+
+  it.each([
+    // A task id shows only with the project's prefix (here bt).
+    ["Bash", "baton verify my-secret", "Bash: baton verify (+1 args)"],
+    ["Bash", "baton task show api-key123", "Bash: baton task show (+1 args)"],
+    ["Bash", "baton task comment pass-word1 hi", "Bash: baton task comment (+2 args)"],
+    ["Bash", "baton verify bt-my-secret", "Bash: baton verify (+1 args)"],
+    [
+      "Bash",
+      "node dist/baton.mjs task update hunter-abc123 --claim",
+      "Bash: baton task update (+2 args)",
+    ],
+    // `>|` and `<&` are redirections, not operators.
+    ["Bash", "echo hi >| hunter2.txt", "Bash: echo (+3 args)"],
+    ["Bash", "echo x >|hunter2.txt; ls", "Bash: echo (+2 args); ls"],
+    ["Bash", "cat <&3 hunter2", "Bash: cat (+2 args)"],
+    // PowerShell "${…}" is a brace group inside double quotes.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a PowerShell ${…} probe, not a template
+    ["PowerShell", 'Write-Host "${a"; hunter2 b}"', "PowerShell: Write-Host (+1 args)"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a PowerShell ${…} probe, not a template
+    ["PowerShell", 'Write-Host "${a`}"; hunter2 b}"', "PowerShell: Write-Host (+1 args)"],
+    // PowerShell has no `NAME=value cmd` prefix: the word is an expression.
+    ["PowerShell", "API_KEY=x hunter2-token run", "PowerShell: (expression)"],
+    ["PowerShell", "TOKEN=abc hunter2", "PowerShell: (expression)"],
+    // A Bash `case` hides its patterns; inside $( ) it makes the group opaque.
+    ["Bash", "case $x in a|hunter2 ) echo;; esac", "Bash: case (+1 args)"],
+    ["Bash", "case $x in start) run ;; hunter2 ) x;; esac", "Bash: case (+1 args)"],
+    ["Bash", 'x="$(case a in a) echo ";hunter2 y";; esac)"', "Bash: (assignment)"],
+    ["Bash", "if x; then case $y in a|hunter2 ) ;; esac; fi", "Bash: if (+1 args); then (+2 args)"],
+    ["Bash", "echo $(case a in a) x;; esac); hunter2 y", "Bash: echo (+1 args)"],
+    // git subcommands and npm scripts come from fixed lists.
+    ["Bash", "git mysecretword", "Bash: git (+1 args)"],
+    ["Bash", "npm run my-api-key", "Bash: npm run (+1 args)"],
+  ])("%s %s shows no argument word (review round 1)", (tool, command, expected) => {
+    const out = one(tool, command);
+    expect(out).toBe(expected);
+    expect(out).not.toMatch(/hunter|api-key|secret|pass-word|mysecretword/);
+  });
+
+  it("shows a task id or script name only when handoff knows them", () => {
+    expect(one("Bash", "baton verify bt-abc")).toBe("Bash: baton verify bt-abc");
+    expect(bare("Bash", "baton verify bt-abc")).toBe("Bash: baton verify (+1 args)");
+    expect(one("Bash", "npm run check")).toBe("Bash: npm run check");
+    expect(bare("Bash", "npm run check")).toBe("Bash: npm run (+1 args)");
   });
 });
 
@@ -643,5 +708,141 @@ describe("absolute paths inside Glob, Grep and Task arguments", () => {
     expect(
       summary("Task", { description: "ls /dev/null https://x.dev/home/y" }, "/w", "linux"),
     ).toBe("Task: ls /dev/null https://x.dev/home/y");
+  });
+});
+
+/**
+ * The security review's probe table for bt-bk4 (scratch probe-bk4.mjs and probe2.mjs), pinned
+ * without known words. Where a row shows hunter2, the shell really runs it as a command.
+ */
+describe("shell summaries: review probe table stays pinned", () => {
+  it.each([
+    ["Bash", 'echo "pass\\"; hunter2 x"', "Bash: echo (+1 args)"],
+    ["PowerShell", 'Write-Host "a`"; hunter2 b"', "PowerShell: Write-Host (+1 args)"],
+    ["run_shell_command", 'echo "pass\\"; hunter2 x"', "run_shell_command: (expression)"],
+    ["run_shell_command", 'Write-Host "a`"; hunter2 b"', "run_shell_command: Write-Host (+1 args)"],
+    ["Bash", "git --git-dir hunter commit", "Bash: git commit (+2 args)"],
+    ["Bash", "baton remember api-key123abc", "Bash: baton remember (+1 args)"],
+    ["Bash", "baton recall my-secret", "Bash: baton recall (+1 args)"],
+    ["Bash", "FOO=hunter2 cmd", "Bash: cmd"],
+    ["PowerShell", '$env:TOKEN="x"; npm start', "PowerShell: (expression); npm (+1 args)"],
+    ["Bash", "sudo mysql -phunter2", "Bash: mysql (+1 args)"],
+    ["Bash", "env TOKEN=x node app.js", "Bash: node (+1 args)"],
+    ["Bash", "mysql -pW@ter123 db", "Bash: mysql (+2 args)"],
+    ["Bash", "curl -u user:pass https://x", "Bash: curl (+3 args)"],
+    [
+      "PowerShell",
+      '"x" | ConvertTo-SecureString',
+      "PowerShell: (expression) | ConvertTo-SecureString",
+    ],
+    ["Bash", "zip -r a.zip f -P secret", "Bash: zip (+5 args)"],
+    ["Bash", 'echo "a\\\\"; hunter2 x', "Bash: echo (+1 args); hunter2 (+1 args)"],
+    ["Bash", 'echo "a\\\\\\"; hunter2 x"', "Bash: echo (+1 args)"],
+    ["Bash", 'echo "a\\\\\\\\"; hunter2 x', "Bash: echo (+1 args); hunter2 (+1 args)"],
+    ["Bash", "echo $'a\\'b; hunter2'", "Bash: echo (+1 args)"],
+    ["Bash", "echo $'a\\\\'; hunter2 x", "Bash: echo (+1 args); hunter2 (+1 args)"],
+    ["Bash", "echo 'a\\'; hunter2 x", "Bash: echo (+1 args); hunter2 (+1 args)"],
+    ["Bash", "cat <<EOF\nhunter2; secret\nEOF", "Bash: cat (+1 args)"],
+    ["Bash", "cat <<'EOF'; hunter2 x\nbody\nEOF", "Bash: cat (+1 args); hunter2 (+1 args)"],
+    ["Bash", 'cat <<< "a; hunter2"', "Bash: cat (+2 args)"],
+    ["Bash", 'cmd /c "a & hunter2"', "Bash: cmd (+2 args)"],
+    ["PowerShell", 'cmd /c "a & hunter2"', "PowerShell: cmd (+2 args)"],
+    ["Bash", "echo `a; hunter2 x`", "Bash: echo (+1 args)"],
+    ["Bash", 'echo "`a; hunter2 x`"', "Bash: echo (+1 args)"],
+    ["Bash", "echo `a \\`b; hunter2\\` c`", "Bash: echo (+1 args)"],
+    ["Bash", "echo a\r\nhunter2 x", "Bash: echo (+1 args)"],
+    ["Bash", "echo a; ls\r\nhunter2 x", "Bash: echo (+1 args); ls"],
+    ["PowerShell", "Write-Host a\rhunter2 x", "PowerShell: Write-Host (+3 args)"],
+    ["Bash", "echo a\rhunter2 x", "Bash: echo (+3 args)"],
+    ["Bash", 'echo "a; hunter2 \\\\\\" x', "Bash: echo (+1 args)"],
+    ["Bash", 'echo "x; hunter2\\\\\\"; y', "Bash: echo (+1 args)"],
+    ["Bash", 'echo "x; hunter2\\\\\\\\"; y', "Bash: echo (+1 args); y"],
+    ["Bash", "echo “a; hunter2 b”", "Bash: echo (+1 args); hunter2 (+1 args)"],
+    ["PowerShell", "Write-Host “a; hunter2 b”", "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "Write-Host ‘a; hunter2 b’", "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "Write-Host 'it’s'; hunter2 b'", "PowerShell: Write-Host (+1 args)"],
+    ["run_shell_command", "echo “a; hunter2 b”", "run_shell_command: (expression)"],
+    ["Bash", "echo hi >| hunter2.txt", "Bash: echo (+3 args)"],
+    ["Bash", "cat <&3 hunter2", "Bash: cat (+2 args)"],
+    ["Bash", "case $x in a|hunter2 ) echo;; esac", "Bash: case (+1 args)"],
+    ["Bash", "case $x in start) run ;; hunter2 ) x;; esac", "Bash: case (+1 args)"],
+    ["Bash", 'x="$(case a in a) echo ";hunter2 y";; esac)"', "Bash: (assignment)"],
+    ["PowerShell", "TOKEN=abc hunter2", "PowerShell: (expression)"],
+    ["Bash", "git hunter2", "Bash: git (+1 args)"],
+    ["Bash", "npm run hunter2-secret", "Bash: npm run (+1 args)"],
+    ["Bash", "baton verify my-secret", "Bash: baton verify (+1 args)"],
+    ["Bash", "baton task show api-key123", "Bash: baton task show (+1 args)"],
+    ["Bash", "baton task comment pass-word1 hello", "Bash: baton task comment (+2 args)"],
+    [
+      "Bash",
+      "node dist/baton.mjs task update hunter-abc123 --claim",
+      "Bash: baton task update (+2 args)",
+    ],
+    ["Bash", "baton task close bt-vyr.2 --reason x", "Bash: baton task close (+3 args)"],
+    ["Bash", "git -C hunter2 status", "Bash: git status (+2 args)"],
+    ["Bash", "git -c user.password=hunter2 commit -m x", "Bash: git commit (+4 args)"],
+    ["Bash", "time", "Bash: time"],
+    ["Bash", "FOO=1", "Bash: (assignment)"],
+    ["Bash", "[[ -n x && hunter2 == y ]]", "Bash: (expression)"],
+    ["Bash", "if [[ a ]]; then echo; fi", "Bash: if (+1 args); then (+1 args); fi"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell ${…} probe, not a template
+    ["Bash", "echo ${x//a;hunter2/b}", "Bash: echo (+1 args)"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell ${…} probe, not a template
+    ["PowerShell", 'Write-Host "${a"; hunter2 b}"', "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "Write-Host @'", "PowerShell: Write-Host (+1 args)"],
+    ["PowerShell", "icacls x --% /grant hunter2; y", "PowerShell: icacls (+2 args)"],
+    ["Bash", "echo a\\;hunter2", "Bash: echo (+1 args)"],
+    ["Bash", "echo $(echo ')'; hunter2 x)", "Bash: echo (+1 args)"],
+    ["Bash", "echo $( (a); hunter2 x)", "Bash: echo (+1 args)"],
+    ["Bash", "a=(x; hunter2) cmd", "Bash: cmd"],
+    ["Bash", "echo a |& hunter2", "Bash: echo (+1 args) | hunter2"],
+    ["Bash", "echo a\u00A0;\u00A0hunter2", "Bash: echo (+1 args); hunter2"],
+    ["PowerShell", "Write-Host a\u2028hunter2 x", "PowerShell: Write-Host (+3 args)"],
+    ["Bash", "echo {a,b}; hunter2", "Bash: echo (+1 args); hunter2"],
+    ["Bash", "echo a#b; ls", "Bash: echo (+1 args); ls"],
+    ["Bash", "echo $((1|2)); ls", "Bash: echo (+1 args); ls"],
+    ["Bash", "export TOKEN=hunter2", "Bash: export (+1 args)"],
+    ["PowerShell", "& 'C:\\x\\hunter2.exe' a", "PowerShell: (expression)"],
+    ["PowerShell", "& hunter2 a", "PowerShell: hunter2 (+1 args)"],
+    ["Bash", "sudo -u hunter2 cmd", "Bash: (expression)"],
+    ["Bash", "C:\\Users\\me\\secret-dir\\tool.exe arg", "Bash: tool.exe (+1 args)"],
+    ["Bash", "sk-abcdefghijklmnopqrstuvwxyz arg", "Bash: [redacted] (+1 args)"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell ${…} probe, not a template
+    ["PowerShell", 'Write-Host "${a`}"; hunter2 b}"', "PowerShell: Write-Host (+1 args)"],
+    [
+      "run_shell_command",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell ${…} probe, not a template
+      'Write-Host "${a"; hunter2 b}"',
+      "run_shell_command: Write-Host (+1 args)",
+    ],
+    ["PowerShell", "API_KEY=x hunter2-token run", "PowerShell: (expression)"],
+    ["Bash", "git mysecretword", "Bash: git (+1 args)"],
+    ["Bash", "git --frobnicate hunter push", "Bash: git (+3 args)"],
+    ["Bash", "npm run my-api-key", "Bash: npm run (+1 args)"],
+    ["Bash", "echo $[1; hunter2]", "Bash: echo (+1 args); (expression)"],
+    ["Bash", "echo x >|hunter2.txt; ls", "Bash: echo (+2 args); ls"],
+    ["Bash", "baton task show bt-abc", "Bash: baton task show (+1 args)"],
+    ["Bash", "baton verify bt-bk4", "Bash: baton verify (+1 args)"],
+  ])("%s %j", (tool, command, expected) => {
+    expect(
+      summarizeToolUse(
+        { id: "p", name: tool, input: { command }, isError: false },
+        "c:\\work\\demo",
+        "win32",
+      ),
+    ).toBe(expected);
+  });
+
+  it("bounds the review's long lines", () => {
+    const sum = (name: string, command: string) =>
+      summarizeToolUse(
+        { id: "p", name, input: { command }, isError: false },
+        "c:\\work\\demo",
+        "win32",
+      );
+    expect(sum("Bash", `echo ${"x".repeat(1020)}; hunter2 b`)).toBe("Bash: echo …");
+    expect(sum("Bash", `echo "${"x ".repeat(600)}"; hunter2 b`)).toBe("Bash: echo (+1 args) …");
+    const big = Array(100_000).fill("a").join("|");
+    expect(sum("run_shell_command", big).length).toBeLessThanOrEqual(100);
   });
 });

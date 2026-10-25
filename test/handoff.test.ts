@@ -12,6 +12,7 @@ import {
 } from "../src/core/handoff.js";
 import { stateHead } from "../src/core/mission.js";
 import { loadSectionIndex } from "../src/core/sections.js";
+import { resolvePrefix } from "../src/core/tasks/native/store.js";
 import type { TaskSnapshot } from "../src/core/tasks/snapshot.js";
 import type { Task } from "../src/core/types.js";
 import { runCli } from "./helpers/cli.js";
@@ -282,6 +283,32 @@ describe("gatherHandoff and runHandoff", () => {
     for (const secret of ["W@ter123", "user:pass", '"x"', "secret", "a.zip"]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it("shows only this project's task ids and package.json scripts", async () => {
+    const { root, transcriptPath } = await gitFixture();
+    const config = await loadConfig(root);
+    const id = `${resolvePrefix(root, config)}-abc`;
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { check: "vitest" } }));
+    writeFileSync(
+      transcriptPath,
+      toJsonl([
+        toolUse("s1", "Bash", { command: "npm run check" }),
+        toolUse("s2", "Bash", { command: "npm run my-api-key" }),
+        toolUse("s3", "Bash", { command: `baton verify ${id}` }),
+        toolUse("s4", "Bash", { command: "baton verify my-secret" }),
+      ]),
+    );
+    const { text } = await runHandoff(root, config, {
+      reason: "manual",
+      transcriptPath,
+      dryRun: true,
+    });
+    expect(text).toContain("- Bash: npm run check\n");
+    expect(text).toContain("- Bash: npm run (+1 args)\n");
+    expect(text).toContain(`- Bash: baton verify ${id}\n`);
+    expect(text).toContain("- Bash: baton verify (+1 args)\n");
+    for (const secret of ["my-api-key", "my-secret"]) expect(text).not.toContain(secret);
   });
 
   it("writes, then is idempotent", async () => {
