@@ -292,6 +292,9 @@ function heredocEnd(text: string, from: number, delim: string, dash: boolean): n
  * PowerShell here-string body is scanned on its own, so its quotes cannot hide what follows
  * it; a body the shell expands is also scanned with its quotes taken as literal text.
  * `lit` scans a body whose quotes are literal. An unclosed body runs to the end of the text.
+ * Bodies are charged to the work budget, and `nest` counts how many enclose this text: past
+ * MAX_DEPTH, or past the budget, the scan throws BudgetSpent and the command fails safe. A body
+ * inside a literal pass is not scanned twice, which keeps the passes from doubling per level.
  */
 function scanInline(
   text: string,
@@ -299,8 +302,11 @@ function scanInline(
   lit: boolean,
   base: number,
   baseDepth: number,
+  nest: number,
+  work: ScanWork,
   out: Inline[],
 ): void {
+  if (nest > MAX_DEPTH) throw new BudgetSpent();
   const posix = dialect === "posix";
   const esc = posix ? "\\" : "`";
   const stack: { closer: string; quote: Quote; lit: boolean; inline: Inline }[] = [];
@@ -328,8 +334,13 @@ function scanInline(
   };
   const body = (from: number, to: number, expands: boolean): void => {
     const t = text.slice(from, to);
-    scanInline(t, dialect, false, base + from, baseDepth + stack.length, out);
-    if (expands) scanInline(t, dialect, true, base + from, baseDepth + stack.length, out);
+    const depth = baseDepth + stack.length;
+    spend(work, t.length);
+    scanInline(t, dialect, false, base + from, depth, nest + 1, work, out);
+    if (expands && !lit) {
+      spend(work, t.length);
+      scanInline(t, dialect, true, base + from, depth, nest + 1, work, out);
+    }
   };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -408,9 +419,9 @@ function scanInline(
   }
 }
 
-function inlineCode(text: string, dialect: ShellDialect): Inline[] {
+function inlineCode(text: string, dialect: ShellDialect, work: ScanWork): Inline[] {
   const out: Inline[] = [];
-  scanInline(text, dialect, false, 0, 0, out);
+  scanInline(text, dialect, false, 0, 0, 0, work, out);
   const seen = new Set<string>();
   return out.filter((x) => {
     const k = `${x.open}:${x.bodyEnd}:${x.depth}`;
@@ -563,7 +574,7 @@ function commandOf(seg: string): { name: string; rest: string[]; ni: number } | 
  * directly by `git commit`, `git tag`, `gh` or `echo`/`printf`, with nothing piped on.
  * Any candidate outside that form leaves every body in place, to be read as code.
  */
-function blankMessageHeredocs(text: string): string {
+function blankMessageHeredocs(text: string, work: ScanWork): string {
   const re = /\$\(\s*cat\s+<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|\\([^\s;|&<>()'"]+))[ \t]*\r?\n/g;
   const found: { open: number; from: number; to: number; close: number }[] = [];
   for (let m = re.exec(text); m !== null; m = re.exec(text)) {
@@ -578,7 +589,7 @@ function blankMessageHeredocs(text: string): string {
     re.lastIndex = after + close[0].length;
   }
   if (found.length === 0) return text;
-  const tops = inlineCode(text, "posix").filter((x) => x.depth === 0);
+  const tops = inlineCode(text, "posix", work).filter((x) => x.depth === 0);
   const segs = segmentsOf(text);
   for (const f of found) {
     if (!tops.some((x) => x.open === f.open && x.bodyEnd === f.close)) return text;
@@ -709,8 +720,8 @@ function targetsAt(
     work.capped = true;
     return WRITE_API_RE.test(command) || WRITE_CMD_RE.test(command) ? mentionsIn(command) : [];
   }
-  const raw = dialect === "posix" ? blankMessageHeredocs(command) : command;
-  const inline = inlineCode(raw, dialect);
+  const raw = dialect === "posix" ? blankMessageHeredocs(command, work) : command;
+  const inline = inlineCode(raw, dialect, work);
   const ctx: ScanCtx = { dialect, depth, raw, inline, work };
   const out: string[] = [];
   for (const seg of segmentsOf(raw)) segmentWrites(seg, out, ctx);

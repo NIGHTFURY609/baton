@@ -389,6 +389,28 @@ describe("shellWriteTargets", () => {
     expect(worst).toBeLessThan(BLOWUP_MS);
   });
 
+  // bt-6yv: nested heredoc bodies are charged to the work budget and capped in depth.
+  it.each([
+    ["40 nested unquoted heredocs", `${RM}; echo ${"$(cat <<A\n".repeat(40)}`, "posix"],
+    ["2000 nested quoted heredocs", `${RM}; ${"<<'A'\n".repeat(2000)}`, "posix"],
+    [
+      "4250 nested here-strings",
+      `Remove-Item .context/STATE.md; ${"@'\n".repeat(4250)}`,
+      "powershell",
+    ],
+  ] as const)("fails safe on %s", (_name, cmd, dialect) => {
+    const scan = shellWriteScan(cmd, dialect);
+    expect(scan.targets).toEqual([".context/STATE.md"]);
+    expect(scan.capped).toBe(true);
+  });
+
+  it("reads a heredoc nested within the depth cap precisely", () => {
+    const cmd = `cat <<A\n$(cat <<B\n${RM}\nB\n)\nA`;
+    expect(shellWriteScan(cmd)).toEqual({ targets: [".context/STATE.md"], capped: false });
+    const quiet = "cat <<A\n$(cat <<B\nhello\nB\n)\nA";
+    expect(shellWriteScan(quiet)).toEqual({ targets: [], capped: false });
+  });
+
   it("normalises a quoted ./ mention and is repeatable", () => {
     const cmd = 'echo x > "./.context/STATE.md"';
     expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
