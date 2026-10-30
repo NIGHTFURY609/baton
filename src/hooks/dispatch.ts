@@ -65,7 +65,7 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
  * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md [Phase 1]
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
- * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0026);
+ * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0027);
  *                     preflight context on dependency/migration files          [Phase 2]
  * - post-tool-use  -> notice the sections whose source_paths an edit touched, once per
  *                     session (post-tool-use.ts)                              [Phase 2]
