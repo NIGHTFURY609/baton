@@ -7,6 +7,7 @@ import {
   defaultPrefix,
   encodeBase36,
   generateHashId,
+  isTaskIdShape,
   nextChildNumber,
 } from "../src/core/tasks/native/ids.js";
 import { TaskError } from "../src/core/tasks/native/model.js";
@@ -56,6 +57,23 @@ describe("ids (Beads parity)", () => {
   it("numbers children after the highest existing one", () => {
     expect(nextChildNumber("bt-a3f", ["bt-a3f.1", "bt-a3f.3", "bt-a3f.3.1", "bt-b"])).toBe(4);
     expect(defaultPrefix("a-skills")).toBe("askills");
+  });
+
+  it("recognises the task id shape", () => {
+    for (const id of ["bt-a3f", "bt-a3f.1.2.3", "bd-8r5sr6bm", "my-proj-x1y"]) {
+      expect(isTaskIdShape(id), id).toBe(true);
+    }
+    for (const word of [
+      "api-key123abc",
+      "bt-ab",
+      "bt-a3f.1.2.3.4",
+      "bt-a3f.0",
+      "bt",
+      "Bt-a3f",
+      `${"a".repeat(17)}-abc`,
+    ]) {
+      expect(isTaskIdShape(word), word).toBe(false);
+    }
   });
 });
 
@@ -177,6 +195,35 @@ describe("TaskService", () => {
     expect(s.claim(t.id).startedAt).toBeDefined();
     s.close(t.id, "done");
     expect(s.reopen(t.id).startedAt).toBeUndefined();
+  });
+
+  it("update --status open on a closed task clears started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    expect(s.claim(t.id).startedAt).toBeDefined();
+    s.close(t.id, "done");
+    const r = s.update(t.id, { status: "open" });
+    expect(r.startedAt).toBeUndefined();
+    expect(r.closedAt).toBeUndefined();
+  });
+
+  it("update --status in_progress on a closed task restarts started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    s.claim(t.id);
+    s.close(t.id, "done");
+    const r = s.update(t.id, { status: "in_progress" });
+    expect(r.startedAt).toBeDefined();
+    expect(r.closedAt).toBeUndefined();
+  });
+
+  it("update --status in_progress on an open task keeps its started_at", () => {
+    const s = open();
+    const t = s.create({ title: "T" });
+    const started = s.claim(t.id).startedAt;
+    s.update(t.id, { status: "open", assignee: "" });
+    const again = s.update(t.id, { status: "in_progress" });
+    expect(again.startedAt).toBe(started);
   });
 
   it("keeps comments, labels and memories in sorted, minimal JSONL", () => {

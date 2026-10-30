@@ -238,6 +238,27 @@ describe("pre-tool-use fails open and quiet", () => {
     expect(out.stderr).toMatch(/^baton hook pre-tool-use:/);
   });
 
+  it("fails open on invalid guards keys", async () => {
+    const root = makeRepo({
+      ...CONTEXT_FIXTURE,
+      ".context/config.yaml": "guards:\n  protectState: 'no'\n",
+    });
+    const out = await call(root, "Edit", { file_path: STATE(root) });
+    expect(out.stdout).toBe("");
+    expect(out.exitCode).toBe(0);
+    expect(out.stderr).toMatch(/^baton hook pre-tool-use:/);
+  });
+
+  it("still denies when only a key outside guards is invalid", async () => {
+    const root = makeRepo({
+      ...CONTEXT_FIXTURE,
+      ".context/config.yaml": "packet:\n  maxChars: -1\n",
+    });
+    const out = await call(root, "Edit", { file_path: STATE(root) });
+    expect(JSON.parse(out.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(out.stderr).toBe("");
+  });
+
   it("ordinary shell commands load no config", async () => {
     const root = makeRepo({ ...CONTEXT_FIXTURE, ".context/config.yaml": "guards: [\n" });
     expect(await call(root, "Bash", { command: "ls" })).toEqual({

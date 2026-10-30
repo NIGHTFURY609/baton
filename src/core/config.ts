@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { z } from "zod";
+import { PREFLIGHT_DEFAULTS } from "./guards-config.js";
 import { ContextPaths, contextPath } from "./paths.js";
 
 /**
@@ -17,18 +18,7 @@ const staleAfter = z.object({
   knowledge: z.number().int().positive().nullable().default(10),
 });
 
-/** Every manifest `dependencyManifests` (hooks/guards.ts) can return, plus migrations. */
-export const PREFLIGHT_DEFAULTS: readonly string[] = [
-  "package.json",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "requirements.txt",
-  "pyproject.toml",
-  "Cargo.toml",
-  "go.mod",
-  "**/migrations/**",
-];
+export { PREFLIGHT_DEFAULTS };
 
 export const ConfigSchema = z.object({
   version: z.literal(1).default(1),

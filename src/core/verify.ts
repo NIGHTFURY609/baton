@@ -42,6 +42,11 @@ export interface CheckRun {
   command: string;
   exitCode: number | null;
   timedOut: boolean;
+  /**
+   * Only set when the check timed out. "tree" means the kill ended the child and its pipes closed;
+   * "backstop" means an orphan kept the pipes open and the backstop timer had to release them.
+   */
+  killedBy?: "tree" | "backstop";
   tail: string;
   ms: number;
 }
@@ -90,6 +95,7 @@ export function runCheck(
     let timedOut = false;
     let exitCode: number | null = null;
     let settled = false;
+    let backstopFired = false;
     let timer: NodeJS.Timeout | undefined;
     let backstop: NodeJS.Timeout | undefined;
 
@@ -102,6 +108,9 @@ export function runCheck(
         command,
         exitCode: code,
         timedOut,
+        ...(timedOut
+          ? { killedBy: backstopFired ? ("backstop" as const) : ("tree" as const) }
+          : {}),
         tail: message ?? tail,
         ms: Date.now() - started,
       });
@@ -139,6 +148,7 @@ export function runCheck(
         timedOut = true;
         killTree(child.pid, () => child.kill("SIGKILL"));
         backstop = setTimeout(() => {
+          backstopFired = true;
           child.stdout.destroy();
           child.stderr.destroy();
           finish(exitCode);

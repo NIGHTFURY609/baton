@@ -169,22 +169,18 @@ describe("runCheck", () => {
     expect(run.exitCode).toBe(0);
   });
 
-  // taskkill.exe start-up varies when the whole suite runs in parallel: measured 320 to 550 ms, and
-  // a 1.7 to 2.0 s spike inferred from the one flake. A second flake source is node start-up under
-  // load exceeding the 300 ms timeout, so pid.txt is missing. Retry absorbs both. The wrong kill
-  // order is not transient: it always takes about 2.3 s.
-  it("kills the whole process tree on timeout", { retry: 2 }, async () => {
+  // Asserts which path ended the child, not elapsed time: wall-clock bounds flake under parallel load.
+  // With the wrong kill order the grandchild survives, its pipes stay open and the backstop fires.
+  // The timeout leaves node room to start under load so pid.txt exists before the kill.
+  it("kills the whole process tree on timeout", async () => {
     const dir = makeTempDir();
-    const started = Date.now();
     const run = await runCheck(
       `node -e "require('fs').writeFileSync('pid.txt',String(process.pid));setInterval(()=>0,1000)"`,
       dir,
-      { timeoutMs: 300 },
+      { timeoutMs: 1500 },
     );
-    const elapsed = Date.now() - started;
     expect(run.timedOut).toBe(true);
-    // The 2 s backstop would only release the pipes at about 2.3 s.
-    expect(elapsed).toBeLessThan(1500);
+    expect(run.killedBy).toBe("tree");
     expect(existsSync(join(dir, "pid.txt"))).toBe(true);
     const pid = Number(readFileSync(join(dir, "pid.txt"), "utf8"));
     expect(Number.isInteger(pid)).toBe(true);
@@ -260,26 +256,25 @@ describe("verifyTask", () => {
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
   });
 
-  it("shares one total deadline across check labels", { retry: 2 }, async () => {
+  it("shares one total deadline across check labels", async () => {
     const root = makeRepo();
-    const SLEEP1 = 'node -e "setTimeout(()=>{},1500)"';
-    const SLEEP5 = 'node -e "setTimeout(()=>{},8000)"';
-    const t = await claimed(root, [`check:${SLEEP1}`, `check:${SLEEP5}`]);
+    // Each check fits the total alone, so the second times out only if the first spent its share.
+    const FIRST = 'node -e "setTimeout(()=>{},2000)"';
+    const SECOND = 'node -e "setTimeout(()=>{},3000)"';
+    const t = await claimed(root, [`check:${FIRST}`, `check:${SECOND}`]);
     writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
     const config = await loadConfig(root);
-    const started = Date.now();
     const out = await verifyTask(root, config, t.id, {
       requireDiff: true,
       close: true,
       timeoutMs: 20_000,
-      totalTimeoutMs: 3500,
+      totalTimeoutMs: 4000,
     });
     expect(out.status).toBe("failed");
     if (out.status === "failed") {
-      expect(out.run.command).toBe(SLEEP5);
+      expect(out.run.command).toBe(SECOND);
       expect(out.run.timedOut).toBe(true);
     }
-    expect(Date.now() - started).toBeLessThan(7500);
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
   });
 
@@ -324,6 +319,30 @@ describe("verifyTask", () => {
       commitAll(root, "first round");
       await withService(root, "tester", (s) => s.close(t.id, "done", true));
       await withService(root, "tester", (s) => s.reopen(t.id));
+    } finally {
+      vi.useRealTimers();
+      delete process.env.GIT_COMMITTER_DATE;
+    }
+    await withService(root, "tester", (s) => s.claim(t.id));
+    const config = await loadConfig(root);
+    const out = await verifyTask(root, config, t.id, { requireDiff: true, close: true });
+    expect(out.status).toBe("no-diff");
+  });
+
+  it("a task reopened via update --status, then re-claimed, does not verify against its earlier work", async () => {
+    const root = makeRepo(CONTEXT_FIXTURE, { git: false });
+    runGit(root, "-c", "init.defaultBranch=main", "init", "-q");
+    let t: Awaited<ReturnType<typeof claimed>>;
+    try {
+      process.env.GIT_COMMITTER_DATE = "2025-12-01T00:00:00+00:00";
+      commitAll(root, "base");
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+      t = await claimed(root, [`check:${PASS}`]);
+      process.env.GIT_COMMITTER_DATE = "2026-01-01T00:10:00+00:00";
+      writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
+      commitAll(root, "first round");
+      await withService(root, "tester", (s) => s.close(t.id, "done", true));
+      await withService(root, "tester", (s) => s.update(t.id, { status: "open" }));
     } finally {
       vi.useRealTimers();
       delete process.env.GIT_COMMITTER_DATE;

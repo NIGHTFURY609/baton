@@ -59,13 +59,13 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
 
 /**
  * Event -> handler. Core modules load with dynamic import(), so a no-op hook
- * never pays for them. Wiring (docs/design/architecture.md, ADR 0023):
+ * never pays for them. Wiring (docs/design/architecture.md, ADR 0024):
  *
  * - session-start  -> mission packet as additionalContext; matcher includes
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
  * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md [Phase 1]
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
- * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0020);
+ * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0027);
  *                     preflight context on dependency/migration files          [Phase 2]
  * - post-tool-use  -> notice the sections whose source_paths an edit touched, once per
  *                     session (post-tool-use.ts)                              [Phase 2]

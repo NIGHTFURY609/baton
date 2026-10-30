@@ -362,9 +362,13 @@ export class TaskService {
           );
         }
         set("status", u.status);
-        if (u.status === "in_progress" && !issue.startedAt) set("started_at", this.now());
-        if (issue.status === "closed") {
+        const reopening = issue.status === "closed";
+        if (reopening) {
+          // Reopening starts a fresh run: verify's diff rule counts from the next start.
           sets.push("closed_at = NULL", "close_reason = NULL");
+          set("started_at", u.status === "in_progress" ? this.now() : null);
+        } else if (u.status === "in_progress" && !issue.startedAt) {
+          set("started_at", this.now());
         }
       }
       for (const l of u.addLabels ?? []) {

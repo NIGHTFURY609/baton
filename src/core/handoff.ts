@@ -1,20 +1,22 @@
 /**
  * `baton handoff`: regenerate .context/STATE.md from structured sources only
  * (task store, git status, diff --stat, recent tool calls). Format and
- * idempotence rules: ADR 0023 (superseding ADR 0015).
+ * idempotence rules: ADR 0024 (superseding ADRs 0015 and 0023).
  */
 
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { Config } from "./config.js";
 import { currentBranch, diffStat, headSha, isGitRepo, porcelainPath, statusLines } from "./git.js";
 import { contextPath } from "./paths.js";
 import { readTextOrEmpty, writeFileAtomic } from "./tasks/native/jsonl.js";
+import { resolvePrefix } from "./tasks/native/store.js";
 import { readTaskSnapshot, type TaskSnapshot } from "./tasks/snapshot.js";
 import {
   findProjectTranscriptDirs,
   listSessionTranscripts,
   readTranscriptTail,
   recentToolCalls,
+  type ShellKnownWords,
 } from "./transcript.js";
 import type { Task } from "./types.js";
 
@@ -203,9 +205,49 @@ export interface HandoffOptions {
   now?: Date;
 }
 
+/** Script names of the root package.json, or undefined when there are none to read. */
+function npmScriptNames(root: string): Set<string> | undefined {
+  try {
+    const pkg: unknown = JSON.parse(readTextOrEmpty(join(root, "package.json")) || "null");
+    const scripts =
+      pkg !== null && typeof pkg === "object" ? (pkg as { scripts?: unknown }).scripts : undefined;
+    if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) return undefined;
+    return new Set(Object.keys(scripts));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ids of every task the snapshot holds (in progress, ready, blocked, recently closed, epics). */
+function snapshotTaskIds(s: TaskSnapshot): Set<string> {
+  const ids = new Set<string>();
+  for (const t of [...s.inProgress, ...s.ready, ...s.recentlyClosed, ...s.openEpics]) ids.add(t.id);
+  for (const b of s.blocked) {
+    ids.add(b.task.id);
+    for (const id of b.blockedBy) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * The words a shell summary may show besides command names (ADR 0024): the native task id
+ * prefix with the ids of the tasks the snapshot read, and the package.json script names.
+ */
+function knownShellWords(root: string, config: Config, snapshot: TaskSnapshot): ShellKnownWords {
+  const known: ShellKnownWords = {};
+  if (config.tasks.backend === "native") {
+    known.taskPrefix = resolvePrefix(root, config);
+    known.taskIds = snapshotTaskIds(snapshot);
+  }
+  const scripts = npmScriptNames(root);
+  if (scripts !== undefined) known.npmScripts = scripts;
+  return known;
+}
+
 async function readToolCalls(
   root: string,
   opts: HandoffOptions,
+  known: ShellKnownWords,
 ): Promise<{ toolCalls: string[]; sessionId: string | null }> {
   try {
     let path = opts.transcriptPath;
@@ -216,7 +258,7 @@ async function readToolCalls(
     if (path === undefined) return { toolCalls: [], sessionId: null };
     const { records } = await readTranscriptTail(path, opts.tailBytes ?? 262_144);
     return {
-      toolCalls: recentToolCalls(records, root, HANDOFF_LIMITS.toolCalls),
+      toolCalls: recentToolCalls(records, root, HANDOFF_LIMITS.toolCalls, process.platform, known),
       sessionId: basename(path).replace(/\.jsonl$/, ""),
     };
   } catch {
@@ -239,16 +281,21 @@ export async function gatherHandoff(
       return "";
     }
   });
+  const snapshotP = readTaskSnapshot(root, config, {
+    readyLimit: HANDOFF_LIMITS.ready,
+    closedLimit: HANDOFF_LIMITS.closed,
+  });
+  // Shell summaries may show only ids of tasks this snapshot read (ADR 0024).
+  const transcriptP = snapshotP.then((s) =>
+    readToolCalls(root, opts, knownShellWords(root, config, s)),
+  );
   const [head, branch, status, stat, snapshot, transcript] = await Promise.all([
     headP,
     git ? currentBranch(root) : Promise.resolve(null),
     git ? statusLines(root) : Promise.resolve([] as string[]),
     statP,
-    readTaskSnapshot(root, config, {
-      readyLimit: HANDOFF_LIMITS.ready,
-      closedLimit: HANDOFF_LIMITS.closed,
-    }),
-    readToolCalls(root, opts),
+    snapshotP,
+    transcriptP,
   ]);
   return {
     generatedAt: (opts.now ?? new Date()).toISOString(),

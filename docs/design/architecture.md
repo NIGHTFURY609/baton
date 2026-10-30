@@ -39,7 +39,7 @@ src/
     drift.ts          freshness from git history, dead references, drift log (ADR 0013)
     verify-doc.ts     verified_at stamping (ADR 0012)
     mission.ts        packet assembly (ADR 0014)
-    handoff.ts        generated STATE.md (ADR 0023)
+    handoff.ts        generated STATE.md (ADR 0024)
     stats.ts          session metrics and snapshots (ADR 0016)
     init.ts, templates.generated.ts  scaffolding from embedded templates (ADR 0017)
     explain/          `baton explain`: target resolution, fact collection, voice templates (ADR 0010)
@@ -48,11 +48,11 @@ src/
       beads.ts        optional adapter over an installed `bd`
       snapshot.ts     read-only task view for mission and handoff
   hooks/
-    entry.ts          fast path for baton hook, skips the commander program (ADR 0023)
+    entry.ts          fast path for baton hook, skips the commander program (ADR 0024)
     io.ts             stdin parsing, per-harness output rendering
     dispatch.ts       event -> handler, fail-open wrapper
-    guards.ts         protected targets, edit targets, shell-write and dependency heuristics (ADR 0020)
-    pre-tool-use.ts   protected-state denies, preflight context (ADR 0020)
+    guards.ts         protected targets, edit targets, shell-write and dependency heuristics (ADR 0027)
+    pre-tool-use.ts   protected-state denies, preflight context (ADR 0027)
     post-tool-use.ts  notices for sections an edit touched (ADR 0021)
     stop.ts           opt-in check of the active task (ADR 0019)
   mcp/server.ts       four-tool MCP adapter (lazy-loaded chunk)
@@ -91,7 +91,7 @@ Exit codes: `0` ok · `1` error · `2` check failed / blocked · `3` not impleme
 | `session-start` | SessionStart `startup\|resume\|clear\|compact` | SessionStart | SessionStart | inject `mission` output as `additionalContext` (1) |
 | `pre-compact` | PreCompact | PreCompact | PreCompress | full `handoff` (1) |
 | `session-end` | SessionEnd (timeout 10 s) | SessionEnd (≤ 3 s) | SessionEnd | fast deterministic `handoff` (1) |
-| `pre-tool-use` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|PowerShell` | PreToolUse `Bash\|apply_patch` | BeforeTool `write_file\|replace\|run_shell_command` | deny protected-state edits; preflight context for dependency and migration files (2, ADR 0020) |
+| `pre-tool-use` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|PowerShell` | PreToolUse `Bash\|apply_patch` | BeforeTool `write_file\|replace\|run_shell_command` | deny protected-state edits; preflight context for dependency and migration files (2, ADR 0027) |
 | `post-tool-use` | PostToolUse `Edit\|Write\|MultiEdit` | PostToolUse | AfterTool | notice the sections whose source_paths an edit touched; uncommitted changes age them (2, ADR 0021) |
 | `stop` | Stop (timeout 600 s; acts only with verify.onStop) | Stop | AfterAgent | run the active task's check; block the stop when it fails (2, ADR 0019) |
 
@@ -99,7 +99,7 @@ Claude Code wiring ships in `plugin/hooks/hooks.json` (exec form: `node ${CLAUDE
 
 ## Performance budget
 
-Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold-time measurement, platform not recorded: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11, Node 22.16 (implementation notes §1): bare `node -e 0` 53 ms, `baton --version` through the full bundle 142 ms, and the no-op `hook pre-tool-use` 144 ms before the fast path existed; with it, `npm run smoke:hooks` measures a PreToolUse median of about 110 ms. `baton hook` therefore bypasses the commander program (ADR 0023). `hook post-tool-use` shares the < 150 ms budget. `hook stop` does nothing unless `verify.onStop` is set; then it runs the active task's check (up to 540 s, ADR 0019).
+Hooks run on every session start and every guarded tool call. Target **< 150 ms** wall time for `hook pre-tool-use` and **< 1 s** for `hook session-start` on a mid-size repo. The MCP SDK is split into a lazily loaded chunk so hooks do not parse it (scaffold-time measurement, platform not recorded: ~75 ms for a no-op hook vs ~35 ms for bare `node`). Measured on Windows 11, Node 22.16 (implementation notes §1): bare `node -e 0` 53 ms, `baton --version` through the full bundle 142 ms, and the no-op `hook pre-tool-use` 144 ms before the fast path existed; with it, `npm run smoke:hooks` measures a PreToolUse median of about 110 ms. `baton hook` therefore bypasses the commander program (ADR 0024). `hook post-tool-use` shares the < 150 ms budget. `hook stop` does nothing unless `verify.onStop` is set; then it runs the active task's check (up to 540 s, ADR 0019).
 
 ## Integrations (consume, do not replace)
 

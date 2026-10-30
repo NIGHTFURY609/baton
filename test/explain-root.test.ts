@@ -1,9 +1,11 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveExplainRoot } from "../src/core/explain/root.js";
+import { samePath } from "../src/core/paths.js";
 import { gitInit, makeTempDir, writeFiles } from "./helpers/explain-fixture.js";
 
-const same = (a: string, b: string) => expect(a.toLowerCase()).toBe(b.toLowerCase());
+// Same directory, not same spelling: git prints the long form of an 8.3 temp path.
+const same = (a: string, b: string) => expect(samePath(a, b), `${a} vs ${b}`).toBe(true);
 
 describe("resolveExplainRoot", () => {
   it("uses cwd when the only repo above it is the home folder", async () => {

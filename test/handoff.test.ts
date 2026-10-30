@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/core/config.js";
 import {
   gatherHandoff,
@@ -12,6 +12,7 @@ import {
 } from "../src/core/handoff.js";
 import { stateHead } from "../src/core/mission.js";
 import { loadSectionIndex } from "../src/core/sections.js";
+import { resolvePrefix } from "../src/core/tasks/native/store.js";
 import type { TaskSnapshot } from "../src/core/tasks/snapshot.js";
 import type { Task } from "../src/core/types.js";
 import { runCli } from "./helpers/cli.js";
@@ -24,6 +25,12 @@ import {
   withService,
 } from "./helpers/repo.js";
 import { isolateClaudeConfig, toJsonl, toolUse } from "./helpers/transcript.js";
+
+const spawned = vi.hoisted(() => ({ count: 0 }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const { countingChildProcess } = await import("./helpers/spawn-count.js");
+  return countingChildProcess(await importOriginal(), spawned);
+});
 
 beforeEach(() => {
   isolateClaudeConfig();
@@ -284,6 +291,38 @@ describe("gatherHandoff and runHandoff", () => {
     }
   });
 
+  it("shows only this project's task ids and package.json scripts", async () => {
+    const { root, transcriptPath } = await gitFixture();
+    const config = await loadConfig(root);
+    const first = await gatherHandoff(root, config, { reason: "manual", transcriptPath });
+    const id = first.snapshot.inProgress[0]?.id ?? "";
+    expect(id.startsWith(`${resolvePrefix(root, config)}-`)).toBe(true);
+    // Has the prefix and the id shape, but is no task of this store.
+    const unknown = `${resolvePrefix(root, config)}-zzzzz`;
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { check: "vitest" } }));
+    writeFileSync(
+      transcriptPath,
+      toJsonl([
+        toolUse("s1", "Bash", { command: "npm run check" }),
+        toolUse("s2", "Bash", { command: "npm run my-api-key" }),
+        toolUse("s3", "Bash", { command: `baton verify ${id}` }),
+        toolUse("s4", "Bash", { command: "baton verify my-secret" }),
+        toolUse("s5", "Bash", { command: `baton task show ${unknown}` }),
+      ]),
+    );
+    const { text } = await runHandoff(root, config, {
+      reason: "manual",
+      transcriptPath,
+      dryRun: true,
+    });
+    expect(text).toContain("- Bash: npm run check\n");
+    expect(text).toContain("- Bash: npm run (+1 args)\n");
+    expect(text).toContain(`- Bash: baton verify ${id}\n`);
+    expect(text).toContain("- Bash: baton verify (+1 args)\n");
+    expect(text).toContain("- Bash: baton task show (+1 args)\n");
+    for (const secret of ["my-api-key", "my-secret", unknown]) expect(text).not.toContain(secret);
+  });
+
   it("writes, then is idempotent", async () => {
     const { root, transcriptPath } = await gitFixture();
     const config = await loadConfig(root);
@@ -382,15 +421,21 @@ describe("handoff command", () => {
     expect(again.stdout).toBe(".context/STATE.md unchanged\n");
   });
 
-  it("is fast on this repo (dry run only, loose bound)", async () => {
+  // Process spawn is what makes a handoff slow on Windows.
+  it("makes a fixed number of subprocess calls on this repo (dry run only)", async () => {
     const dir = makeTempDir("baton-transcript-");
     const transcriptPath = join(dir, "perf.jsonl");
     writeFileSync(transcriptPath, toJsonl([toolUse("p1", "Bash", { command: "npm run check" })]));
     const config = await loadConfig(REPO_ROOT);
     const opts = { reason: "perf", dryRun: true, transcriptPath };
-    await runHandoff(REPO_ROOT, config, opts);
-    const t0 = performance.now();
-    await runHandoff(REPO_ROOT, config, opts);
-    expect(performance.now() - t0).toBeLessThan(3000);
+    const counts: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const before = spawned.count;
+      await runHandoff(REPO_ROOT, config, opts);
+      counts.push(spawned.count - before);
+    }
+    // isGitRepo, headSha, statusLines, diffStat, currentBranch, and one to spare.
+    expect(counts[0]).toBeLessThanOrEqual(6);
+    expect(counts[1]).toBe(counts[0]);
   });
 });

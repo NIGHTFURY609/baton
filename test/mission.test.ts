@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PACKET_HEADER } from "../src/core/budget.js";
 import { loadConfig } from "../src/core/config.js";
 import { evaluateFreshness } from "../src/core/drift.js";
@@ -18,6 +18,13 @@ import {
   stampFixture,
   withService,
 } from "./helpers/repo.js";
+
+// spawn/spawnSync are not on mission's path today, so counting execFile covers it.
+const spawned = vi.hoisted(() => ({ count: 0 }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const { countingChildProcess } = await import("./helpers/spawn-count.js");
+  return countingChildProcess(await importOriginal(), spawned);
+});
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");
 
@@ -175,11 +182,29 @@ describe("dogfood: this repo's packet", () => {
     }
   });
 
-  it("builds a second packet quickly", async () => {
+  // Guards against per-section subprocess fan-out in buildMission (process spawn is what makes a
+  // build slow on Windows). It targets fan-out that scales with the number of sections; a single
+  // extra constant call can slip under the bound because of the +1 slack below.
+  // The count depends on repo data, so the bound is derived from it: FIXED_SPAWNS covers the calls
+  // every evaluateFreshness run makes (isGitRepo, headSha, the two ls-files calls of
+  // listRepoFiles, statusLines) plus the task snapshot's own calls; each distinct verified_at
+  // sha adds one changedFilesPerCommit call, and ignoredPaths adds at most one more.
+  const FIXED_SPAWNS = 6;
+
+  it("bounds subprocess calls per distinct verified_at commit, the same on every build", async () => {
     const config = await loadConfig(REPO_ROOT);
-    await buildMission(REPO_ROOT, config);
-    const t0 = performance.now();
-    await buildMission(REPO_ROOT, config);
-    expect(performance.now() - t0).toBeLessThan(3000);
+    const index = await loadSectionIndex(REPO_ROOT, { lenient: true });
+    const distinctShas = new Set(
+      index.sections.map((s) => s.meta.verifiedAt).filter((v): v is string => v !== null),
+    ).size;
+    const bound = FIXED_SPAWNS + distinctShas + 1;
+    const counts: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const before = spawned.count;
+      await buildMission(REPO_ROOT, config);
+      counts.push(spawned.count - before);
+    }
+    expect(counts[0]).toBeLessThanOrEqual(bound);
+    expect(counts[1]).toBe(counts[0]);
   });
 });

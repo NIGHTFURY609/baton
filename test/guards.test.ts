@@ -10,9 +10,11 @@ import {
   mentionRule,
   protectedClass,
   shellMayWriteProtected,
+  shellWriteScan,
   shellWriteTargets,
   toRepoTarget,
 } from "../src/hooks/guards.js";
+import { BLOWUP_MS } from "./helpers/limits.js";
 
 describe("glob", () => {
   it("handles ** at any depth, including zero", () => {
@@ -158,6 +160,257 @@ describe("shellWriteTargets", () => {
     expect(shellWriteTargets(cmd)).toEqual([]);
   });
 
+  // bt-2a8: data-argument commands that still run code.
+  const codeDeny: [string, string][] = [
+    [`echo $(node -e "require('fs').writeFileSync('.context/STATE.md','x')")`, "state"],
+    ["echo `node -e \"require('fs').writeFileSync('.context/STATE.md','x')\"`", "state"],
+    [`printf %s "$(node -e "require('fs').writeFileSync('.context/tasks.jsonl','')")"`, "tasks"],
+    [`grep x "$(python -c "open('.context/memories.jsonl','w')")"`, "memories"],
+    ["echo $(rm .context/STATE.md)", "state"],
+    ["echo `rm -rf .context`", "context-dir"],
+    [
+      `git rebase --exec "node -e \\"require('fs').writeFileSync('.context/STATE.md','x')\\"" HEAD~1`,
+      "state",
+    ],
+    [
+      `git rebase -x "node -e \\"require('fs').writeFileSync('.context/STATE.md','x')\\"" HEAD~1`,
+      "state",
+    ],
+    ["git rebase --exec 'rm .context/tasks.jsonl' HEAD~2", "tasks"],
+    ["git rebase --exec='rm .context/tasks.jsonl' HEAD~2", "tasks"],
+    [`git bisect run node -e "require('fs').writeFileSync('.context/STATE.md','x')"`, "state"],
+    ["git bisect run rm .context/STATE.md", "state"],
+    [
+      `git submodule foreach "node -e \\"require('fs').unlinkSync('../.context/tasks.jsonl')\\""`,
+      "tasks",
+    ],
+    ["git submodule foreach --recursive 'rm ../.context/STATE.md'", "state"],
+    [
+      `git -c alias.x='!node -e "require(\\"fs\\").writeFileSync(\\".context/STATE.md\\",\\"x\\")"' x`,
+      "state",
+    ],
+    ["git -c alias.x='!rm .context/memories.jsonl' x", "memories"],
+    [`rg --pre ./pre.sh "writeFileSync" .context/STATE.md`, "state"],
+    ["rg --pre rm x .context/STATE.md", "state"],
+    ["rg --pre=./wipe.sh x .context/tasks.jsonl", "tasks"],
+    [`php -r "file_put_contents('.context/STATE.md', 'x');"`, "state"],
+    [`php -r "fopen('.context/tasks.jsonl', 'w');"`, "tasks"],
+    // Fail-safe: inside double quotes $(…) is a real substitution in bash.
+    ['git commit -m "guards: scan $(…) for writeFileSync" -- .context/tasks.jsonl', "tasks"],
+  ];
+  it.each(codeDeny)("denies code in a data command: %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const codeAllow = [
+    'git commit -m "fix writeFile race" -- src/a.ts .context/tasks.jsonl',
+    'git commit -m "guards: deny Set-Content and Out-File" -- src/hooks/guards.ts .context/tasks.jsonl',
+    'grep -rn "writeFileSync" .context/',
+    'rg "Remove-Item" .context/knowledge .context/decisions',
+    "git restore --staged .context/tasks.jsonl",
+    'git log -S "writeFile" -- .context/tasks.jsonl',
+    "git commit -m 'docs: explain $(…) handling' -- .context/tasks.jsonl",
+    "git commit -m 'guards: scan $(…) for writeFileSync' -- .context/tasks.jsonl",
+    "git commit -m 'guards: name `writeFileSync` in the scan' -- .context/tasks.jsonl",
+    'git commit -m "$(cat msg.txt)" -- .context/tasks.jsonl',
+    'git -c core.autocrlf=false commit -m "fix writeFile race" -- .context/tasks.jsonl',
+    "git rebase main -- .context/tasks.jsonl",
+    'git bisect good -- .context/STATE.md "writeFile"',
+    "git submodule status -- .context",
+    "rg --pre-glob '*.gz' \"writeFile\" .context/",
+    "echo $(cat .context/STATE.md)",
+  ];
+  it.each(codeAllow)("allows data in a data command: %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
+  // bt-2a8 fix round 1.
+  const W = `node -e "require('fs').writeFileSync('.context/STATE.md','x')"`;
+  const heredocMsg = (body: string): string =>
+    `git commit -m "$(cat <<'EOF'\nfix(guards): keep the scan\n\n${body}\nEOF\n)" -- src/hooks/guards.ts .context/tasks.jsonl`;
+  const round1Deny: [string, string][] = [
+    [`echo <(${W})`, "state"],
+    [`grep x <(${W})`, "state"],
+    [`cat <(${W})`, "state"],
+    [`echo x > >(${W})`, "state"],
+    ["echo (Set-Content .context\\STATE.md x)", "state"],
+    ["echo @(Set-Content .context\\STATE.md x)", "state"],
+    ["Write-Output (Remove-Item .context\\tasks.jsonl)", "tasks"],
+    ["(rm .context/STATE.md)", "state"],
+    ["echo x; (rm .context/STATE.md)", "state"],
+    ["( rm .context/STATE.md )", "state"],
+    ["{ rm .context/STATE.md; }", "state"],
+    ['git commit -m "docs: never `rm .context/tasks.jsonl` by hand"', "tasks"],
+    [`echo \\' $(${W})`, "state"],
+    [`echo $'\\'' $(${W})`, "state"],
+    [`echo "a \\" it's" $(${W})`, "state"],
+    ["echo \\\\$(rm .context/STATE.md)", "state"],
+    ["node <<'EOF'\nrequire('fs').writeFileSync('.context/STATE.md','x')\nEOF", "state"],
+    ["bash <<'EOF'\nrm .context/STATE.md\nEOF", "state"],
+    ["cat <<EOF\n$(rm .context/STATE.md)\nEOF", "state"],
+    ["git rebase -ix 'rm .context/STATE.md' HEAD~2", "state"],
+    ["git rebase --exe 'rm .context/STATE.md' HEAD~2", "state"],
+    ["git submodule foreach -q 'rm ../.context/STATE.md'", "state"],
+    ["git submodule foreach --quiet --recursive 'rm ../.context/STATE.md'", "state"],
+    ['git -c alias.x="!rm .context/memories.jsonl" x', "memories"],
+    ['git -c "alias.x=!rm .context/memories.jsonl" x', "memories"],
+    ["git -c alias.x=!rm\\ .context/memories.jsonl x", "memories"],
+    [`php -r "fopen('.context/tasks.jsonl', 'a+b');"`, "tasks"],
+    [`python -c "open('.context/tasks.jsonl', mode='w')"`, "tasks"],
+    ["echo $(echo $(echo $(echo $(echo $(echo $(rm .context/STATE.md))))))", "state"],
+  ];
+  it.each(round1Deny)("denies (round 1) %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const round1Allow = [
+    heredocMsg("Now `echo $(rm .context/STATE.md)` is denied."),
+    heredocMsg("The guard scans for `writeFileSync` near .context/tasks.jsonl."),
+    "git commit -m \"$(cat <<-'EOF'\n\tNow `rm .context/STATE.md` is denied.\n\tEOF\n)\" -- .context/tasks.jsonl",
+    'git commit -m "$(cat <<"EOF"\nNow `rm .context/STATE.md` is denied.\nEOF\n)" -- .context/tasks.jsonl',
+    'git commit -m "$(cat <<\\EOF\nNow `rm .context/STATE.md` is denied.\nEOF\n)" -- .context/tasks.jsonl',
+    'git commit -m "docs: never \\`rm .context/tasks.jsonl\\` by hand"',
+    'git commit -m "guards: scan \\$(...) for writeFileSync" -- .context/tasks.jsonl',
+    'echo "$(git log -1 --format=%s -- .context/tasks.jsonl)"',
+    "x=$(grep -c writeFileSync .context/knowledge/harness-limits.md)",
+    "echo $(echo $(echo $(echo $(echo $(echo $(cat .context/STATE.md))))))",
+    "echo $((1 + 2)) .context/STATE.md",
+  ];
+  it.each(round1Allow)("allows (round 1) %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
+  it("denies a 6000-deep substitution without throwing", () => {
+    const cmd = `echo ${"$(".repeat(6000)}rm .context/STATE.md${")".repeat(6000)}`;
+    expect(() => shellWriteTargets(cmd)).not.toThrow();
+    expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
+  });
+
+  it("denies every protected mention in a command over 16 KB", () => {
+    const long = `echo ${"x".repeat(17_000)} .context/STATE.md`;
+    expect(shellWriteTargets(long).map(mentionRule)).toEqual(["state"]);
+    expect(shellWriteTargets(`echo ${"x".repeat(17_000)}`)).toEqual([]);
+  });
+
+  it("caps the cost of deep nesting and long dense commands", () => {
+    const deep = `echo ${"$(".repeat(4000)}rm .context/STATE.md${")".repeat(4000)}`;
+    const capped = { targets: [".context/STATE.md"], capped: true };
+    expect(shellWriteScan(deep)).toEqual(capped);
+    const dense = `echo $(echo ${"=:".repeat(24 * 1024)}) .context/STATE.md`;
+    expect(shellWriteScan(dense)).toEqual(capped);
+    for (const api of ["fopen(", "open("]) {
+      const long = `php -r "${api.repeat(8 * 1024)}" .context/STATE.md`;
+      expect(shellWriteScan(long)).toEqual(capped);
+      const short = `php -r "${api.repeat(2000)}" .context/STATE.md`;
+      expect(() => shellWriteTargets(short)).not.toThrow();
+    }
+  });
+
+  // bt-2a8 fix round 2.
+  const NW = "require('fs').writeFileSync('.context/STATE.md','x')";
+  const RM = "rm .context/STATE.md";
+  const round2Deny: [string, string][] = [
+    // R1: a quoted heredoc body is blanked only inside git commit/tag, gh, echo or printf.
+    [`cat <<'EOF' | bash\n${RM}\nEOF`, "state"],
+    [`cat <<'EOF' | sh\n${RM}\nEOF`, "state"],
+    [`cat <<'EOF' | node\n${NW}\nEOF`, "state"],
+    [`bash -c "$(cat <<'EOF'\n${RM}\nEOF\n)"`, "state"],
+    [`node -e "$(cat <<'EOF'\n${NW}\nEOF\n)"`, "state"],
+    [`eval "$(cat <<'EOF'\n${RM}\nEOF\n)"`, "state"],
+    [`source <(cat <<'EOF'\n${RM}\nEOF\n)`, "state"],
+    [`bash <(cat <<'EOF'\n${RM}\nEOF\n)`, "state"],
+    [`echo "$(cat <<'EOF'\n${RM}\nEOF\n)" | bash`, "state"],
+    [`bash -c "$(echo "$(cat <<'EOF'\n${RM}\nEOF\n)")"`, "state"],
+    [`git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)" && ${RM}`, "state"],
+    [`echo $(cat <<'EOF'\nx\nEOF\n) $(${RM})`, "state"],
+    // Fail safe by choice: outside the narrow form a quoted heredoc body is read as code.
+    [`cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF`, "state"],
+    // Quotes in a heredoc body do not hide what follows it.
+    [`cat <<'EOF'\ndon't\nEOF\necho $(${RM})`, "state"],
+    [`cat <<EOF\ndon't $(${RM})\nEOF`, "state"],
+    // R2: quotes are read on the raw text; only a real backslash escapes.
+    [`echo src/'a' $(node -e "${NW}")`, "state"],
+    [`echo a/'b' \`${RM}\``, "state"],
+    [`ls src/'x y' $(${RM})`, "state"],
+    [`grep x ./'my file' <(node -e "${NW}")`, "state"],
+    [`echo "a/" $(${RM})`, "state"],
+    // Folded: an escaped space in an unquoted rebase exec command.
+    [`git rebase -x rm\\ .context/STATE.md HEAD~2`, "state"],
+    [`git rebase --exec rm\\ .context/STATE.md HEAD~2`, "state"],
+    [`git rebase -xrm\\ .context/STATE.md HEAD~2`, "state"],
+  ];
+  it.each(round2Deny)("denies (round 2) %s", (cmd, rule) => {
+    const hits = shellWriteTargets(cmd);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(mentionRule(hits[0] ?? "")).toBe(rule);
+  });
+
+  const round2Allow = [
+    `gh pr create --title x --body "$(cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF\n)"`,
+    `echo "$(cat <<'EOF'\n${RM}\nEOF\n)"`,
+    `printf '%s\\n' "$(cat <<'EOF'\n${RM}\nEOF\n)" > notes.md`,
+    `git tag -a v1 -m "$(cat <<'EOF'\nNow \`${RM}\` is denied.\nEOF\n)"`,
+    `git commit -m "$(cat <<'EOF'\nfix (a) b) c: \`${RM}\` and don't\nEOF\n)" -- .context/tasks.jsonl`,
+  ];
+  it.each(round2Allow)("allows (round 2) %s", (cmd) => {
+    expect(shellWriteTargets(cmd)).toEqual([]);
+  });
+
+  it("denies inside the work budget whatever the input (round 2)", () => {
+    const fillTo = (pre: string, unit: string, post: string): string =>
+      pre + unit.repeat(Math.floor((16_383 - pre.length - post.length) / unit.length)) + post;
+    const W = `${RM}; `;
+    const cases = [
+      fillTo(`${W}echo $(echo $(echo $(echo $(echo $(rm `, "=:", "))))) .context/STATE.md"),
+      fillTo(`${W}bash -c "echo $(bash -c "echo $(bash -c "echo $(echo `, "=:", ')")")"'),
+      fillTo(`${W}echo $(bash -c "echo $(bash -c "echo `, "=:", '")")'),
+      fillTo(`${W}echo ( $( ( $( ( `, "=:", " ) ) ) ) )"),
+      fillTo(`${W}x=$(y=$(z=$(w=$(v=$(`, "=:", ")))))"),
+      fillTo(`${W}git -c alias.x=!$(git -c alias.y=!$(echo $(echo `, "=:", "))) x"),
+      fillTo(`${W}git rebase -x "$(git rebase -x "$(echo $(echo `, "=:", '))")"'),
+      fillTo(`${W}cat <(echo >(echo $(echo $(rm `, "=:", "))))"),
+      fillTo(`${W}git submodule foreach "$(git submodule foreach "$(echo $(echo `, "=:", '))")"'),
+      fillTo(`${W}cat $(cat $(cat $(cat $(cat $(cat `, "<<'E' ", ")))))"),
+      fillTo(`${W}bash -c "cat $(bash -c "cat $(bash -c "cat $(cat `, "<<'E' ", ')")")"'),
+      fillTo(`${W}cat `, "<<'E' ", ""),
+      fillTo(`${W}cat `, "<<-\\E ", ""),
+      fillTo("echo $(echo ", "=:", ") .context/STATE.md; rm .context/STATE.md"),
+    ];
+    let worst = 0;
+    for (const cmd of cases) {
+      const t = performance.now();
+      expect(shellWriteTargets(cmd)).toContain(".context/STATE.md");
+      worst = Math.max(worst, performance.now() - t);
+    }
+    expect(worst).toBeLessThan(BLOWUP_MS);
+  });
+
+  // bt-6yv: nested heredoc bodies are charged to the work budget and capped in depth.
+  it.each([
+    ["40 nested unquoted heredocs", `${RM}; echo ${"$(cat <<A\n".repeat(40)}`, "posix"],
+    ["2000 nested quoted heredocs", `${RM}; ${"<<'A'\n".repeat(2000)}`, "posix"],
+    [
+      "4250 nested here-strings",
+      `Remove-Item .context/STATE.md; ${"@'\n".repeat(4250)}`,
+      "powershell",
+    ],
+  ] as const)("fails safe on %s", (_name, cmd, dialect) => {
+    const scan = shellWriteScan(cmd, dialect);
+    expect(scan.targets).toEqual([".context/STATE.md"]);
+    expect(scan.capped).toBe(true);
+  });
+
+  it("reads a heredoc nested within the depth cap precisely", () => {
+    const cmd = `cat <<A\n$(cat <<B\n${RM}\nB\n)\nA`;
+    expect(shellWriteScan(cmd)).toEqual({ targets: [".context/STATE.md"], capped: false });
+    const quiet = "cat <<A\n$(cat <<B\nhello\nB\n)\nA";
+    expect(shellWriteScan(quiet)).toEqual({ targets: [], capped: false });
+  });
+
   it("normalises a quoted ./ mention and is repeatable", () => {
     const cmd = 'echo x > "./.context/STATE.md"';
     expect(shellWriteTargets(cmd)).toEqual([".context/STATE.md"]);
@@ -295,6 +548,29 @@ describe("checkToolCall", () => {
     expect(d?.rule).toBe("state");
     expect(d?.reason).toContain("baton handoff");
     expect(rule("NotebookEdit", { notebook_path: "N:/repo/.context/tasks.jsonl" })).toBe("tasks");
+  });
+
+  it("reads PowerShell commands without bash escapes (bt-2a8)", () => {
+    const ps = (command: string) => rule("PowerShell", { command });
+    expect(ps('git commit -m "fix writeFile race" -- src/a.ts .context\\tasks.jsonl')).toBeNull();
+    expect(ps('Write-Output "$(Set-Content -Path .context\\STATE.md -Value x)"')).toBe("state");
+    // In PowerShell a backslash escapes nothing, so this subexpression runs.
+    expect(ps('Write-Output "x\\$(Set-Content .context\\STATE.md x)"')).toBe("state");
+    expect(rule("Bash", { command: 'echo "x\\$(rm .context/STATE.md)"' })).toBeNull();
+    // Round 2: a backslash before a quote ends a PowerShell string; the backtick escapes.
+    expect(ps('echo "C:\\" (Set-Content .context\\STATE.md x)')).toBe("state");
+    expect(ps("echo 'C:\\' (Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(ps('Write-Output "`$(x)" $(Set-Content .context\\STATE.md x)')).toBe("state");
+    expect(ps("Write-Output 'it''s' $(Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(ps("@'\nit's\n'@ | Out-Null; echo $(Set-Content .context\\STATE.md x)")).toBe("state");
+    expect(
+      ps('git commit -m "guards: deny writeFileSync`n`nbody" -- .context\\tasks.jsonl'),
+    ).toBeNull();
+    // Gemini's run_shell_command is read as Bash and as PowerShell; either deny wins.
+    const gem = (command: string) => rule("run_shell_command", { command });
+    expect(gem('Write-Output "x\\$(Set-Content .context\\STATE.md x)"')).toBe("state");
+    expect(gem("echo `rm .context/STATE.md`")).toBe("state");
+    expect(gem('git commit -m "fix writeFile race" -- src/a.ts .context/tasks.jsonl')).toBeNull();
   });
 
   it("covers decision records by status", () => {
