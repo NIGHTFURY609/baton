@@ -80,7 +80,7 @@ function readText(root: string, rp: string): string | null {
   }
 }
 
-type Config = Awaited<ReturnType<typeof import("../core/config.js").loadConfig>>;
+type GuardsConfig = import("../core/guards-config.js").GuardsConfig;
 
 export async function preToolUse(
   input: HookInput,
@@ -103,13 +103,13 @@ export async function preToolUse(
     readText: (rp) => readText(ctx.root, rp),
   });
 
-  let config: Config | undefined;
-  const getConfig = async (): Promise<Config> => {
-    config ??= await (await import("../core/config.js")).loadConfig(ctx.root);
+  let config: GuardsConfig | undefined;
+  const getConfig = async (): Promise<GuardsConfig> => {
+    config ??= await (await import("../core/guards-config.js")).loadGuardsConfig(ctx.root);
     return config;
   };
 
-  if (denial && (await getConfig()).guards.protectState) {
+  if (denial && (await getConfig()).protectState) {
     try {
       const dir = contextPath(ctx.root, ".cache");
       await mkdir(dir, { recursive: true });
@@ -138,7 +138,7 @@ export async function preToolUse(
   if (candidates.length === 0) return { kind: "noop" };
 
   const cfg = await getConfig();
-  const paths = candidates.filter((p) => matchesPreflight(p, cfg.guards.preflightPaths, platform));
+  const paths = candidates.filter((p) => matchesPreflight(p, cfg.preflightPaths, platform));
   if (paths.length === 0) return { kind: "noop" };
 
   const { loadSectionIndex } = await import("../core/sections.js");
