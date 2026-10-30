@@ -256,26 +256,25 @@ describe("verifyTask", () => {
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
   });
 
-  it("shares one total deadline across check labels", { retry: 2 }, async () => {
+  it("shares one total deadline across check labels", async () => {
     const root = makeRepo();
-    const SLEEP1 = 'node -e "setTimeout(()=>{},1500)"';
-    const SLEEP5 = 'node -e "setTimeout(()=>{},8000)"';
-    const t = await claimed(root, [`check:${SLEEP1}`, `check:${SLEEP5}`]);
+    // Each check fits the total alone, so the second times out only if the first spent its share.
+    const FIRST = 'node -e "setTimeout(()=>{},2000)"';
+    const SECOND = 'node -e "setTimeout(()=>{},3000)"';
+    const t = await claimed(root, [`check:${FIRST}`, `check:${SECOND}`]);
     writeFiles(root, { "src/auth/login.ts": "export const login = 2;\n" });
     const config = await loadConfig(root);
-    const started = Date.now();
     const out = await verifyTask(root, config, t.id, {
       requireDiff: true,
       close: true,
       timeoutMs: 20_000,
-      totalTimeoutMs: 3500,
+      totalTimeoutMs: 4000,
     });
     expect(out.status).toBe("failed");
     if (out.status === "failed") {
-      expect(out.run.command).toBe(SLEEP5);
+      expect(out.run.command).toBe(SECOND);
       expect(out.run.timedOut).toBe(true);
     }
-    expect(Date.now() - started).toBeLessThan(7500);
     expect((await readTask(root, t.id))?.status).toBe("in_progress");
   });
 

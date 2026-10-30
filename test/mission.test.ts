@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { PACKET_HEADER } from "../src/core/budget.js";
 import { loadConfig } from "../src/core/config.js";
@@ -20,29 +19,11 @@ import {
   withService,
 } from "./helpers/repo.js";
 
-// Counts child processes started through node:child_process execFile and execFileSync (git()
-// and beads use them), delegating to the real implementation. spawn/spawnSync are not on
-// mission's path today, so they are not counted.
+// spawn/spawnSync are not on mission's path today, so counting execFile covers it.
 const spawned = vi.hoisted(() => ({ count: 0 }));
 vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  const real = actual.execFile;
-  const counted = ((...args: unknown[]) => {
-    spawned.count++;
-    return (real as (...a: unknown[]) => unknown)(...args);
-  }) as unknown as typeof actual.execFile;
-  (counted as unknown as Record<symbol, unknown>)[promisify.custom] = (...args: unknown[]) => {
-    spawned.count++;
-    return (real as unknown as Record<symbol, (...a: unknown[]) => unknown>)[promisify.custom]?.(
-      ...args,
-    );
-  };
-  const realSync = actual.execFileSync;
-  const countedSync = ((...args: unknown[]) => {
-    spawned.count++;
-    return (realSync as (...a: unknown[]) => unknown)(...args);
-  }) as unknown as typeof actual.execFileSync;
-  return { ...actual, execFile: counted, execFileSync: countedSync };
+  const { countingChildProcess } = await import("./helpers/spawn-count.js");
+  return countingChildProcess(await importOriginal(), spawned);
 });
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");

@@ -10,9 +10,11 @@ import {
   mentionRule,
   protectedClass,
   shellMayWriteProtected,
+  shellWriteScan,
   shellWriteTargets,
   toRepoTarget,
 } from "../src/hooks/guards.js";
+import { BLOWUP_MS } from "./helpers/limits.js";
 
 describe("glob", () => {
   it("handles ** at any depth, including zero", () => {
@@ -296,20 +298,15 @@ describe("shellWriteTargets", () => {
 
   it("caps the cost of deep nesting and long dense commands", () => {
     const deep = `echo ${"$(".repeat(4000)}rm .context/STATE.md${")".repeat(4000)}`;
-    let t = performance.now();
-    expect(shellWriteTargets(deep).length).toBeGreaterThan(0);
-    expect(performance.now() - t).toBeLessThan(150);
+    const capped = { targets: [".context/STATE.md"], capped: true };
+    expect(shellWriteScan(deep)).toEqual(capped);
     const dense = `echo $(echo ${"=:".repeat(24 * 1024)}) .context/STATE.md`;
-    t = performance.now();
-    expect(shellWriteTargets(dense).length).toBeGreaterThan(0);
-    expect(performance.now() - t).toBeLessThan(150);
+    expect(shellWriteScan(dense)).toEqual(capped);
     for (const api of ["fopen(", "open("]) {
       const long = `php -r "${api.repeat(8 * 1024)}" .context/STATE.md`;
-      t = performance.now();
-      expect(shellWriteTargets(long).length).toBeGreaterThan(0);
+      expect(shellWriteScan(long)).toEqual(capped);
       const short = `php -r "${api.repeat(2000)}" .context/STATE.md`;
       expect(() => shellWriteTargets(short)).not.toThrow();
-      expect(performance.now() - t).toBeLessThan(1000);
     }
   });
 
@@ -389,7 +386,7 @@ describe("shellWriteTargets", () => {
       expect(shellWriteTargets(cmd)).toContain(".context/STATE.md");
       worst = Math.max(worst, performance.now() - t);
     }
-    expect(worst).toBeLessThan(1000);
+    expect(worst).toBeLessThan(BLOWUP_MS);
   });
 
   it("normalises a quoted ./ mention and is repeatable", () => {

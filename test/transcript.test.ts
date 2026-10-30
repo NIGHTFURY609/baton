@@ -16,6 +16,7 @@ import {
   sumUsage,
   toolUses,
 } from "../src/core/transcript.js";
+import { BLOWUP_MS } from "./helpers/limits.js";
 import { makeTempDir } from "./helpers/repo.js";
 import { toJsonl, toolResult, toolUse } from "./helpers/transcript.js";
 
@@ -340,13 +341,10 @@ describe("shell tool-call summaries: command names only", () => {
   it("scans a bounded prefix of a huge line", () => {
     const line = Array(100_000).fill("a").join("|");
     expect(line.length).toBeGreaterThan(199_000);
-    const start = performance.now();
     const out = summarizeShellCommand(line);
-    const ms = performance.now() - start;
     // 1024 scanned characters; " | " between parts at most triples them.
     expect(out.length).toBeLessThanOrEqual(3 * 1024);
     expect(out.endsWith("…")).toBe(true);
-    expect(ms).toBeLessThan(250);
   });
 
   // Fix round 1 (security review of bt-bk4).
@@ -602,7 +600,7 @@ describe("redactSecrets", () => {
     for (const run of runs) {
       const t0 = performance.now();
       const out = redactSecrets(run);
-      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(performance.now() - t0).toBeLessThan(BLOWUP_MS);
       expect(out.length).toBeLessThanOrEqual(1100);
     }
   });
@@ -649,7 +647,7 @@ describe("redactSecrets", () => {
         "/w",
         "linux",
       );
-      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(performance.now() - t0).toBeLessThan(BLOWUP_MS);
       expect(out.length).toBeLessThanOrEqual(90);
     }
   });

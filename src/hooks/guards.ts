@@ -604,16 +604,22 @@ function blankMessageHeredocs(text: string): string {
 
 class BudgetSpent extends Error {}
 
+interface ScanWork {
+  used: number;
+  /** A length or depth cap replaced a precise read. */
+  capped: boolean;
+}
+
 interface ScanCtx {
   dialect: ShellDialect;
   depth: number;
   /** Raw text of the command being scanned at this depth (same offsets as its segments). */
   raw: string;
   inline: Inline[];
-  work: { used: number };
+  work: ScanWork;
 }
 
-function spend(work: { used: number }, n: number): void {
+function spend(work: ScanWork, n: number): void {
   work.used += n;
   if (work.used > WORK_BUDGET) throw new BudgetSpent();
 }
@@ -691,12 +697,16 @@ function targetsAt(
   command: string,
   dialect: ShellDialect,
   depth: number,
-  work: { used: number },
+  work: ScanWork,
 ): string[] {
   spend(work, command.length);
   // Fail safe past a cap: every protected mention counts as written.
-  if (command.length > MAX_LENGTH) return capMentions(command);
+  if (command.length > MAX_LENGTH) {
+    work.capped = true;
+    return capMentions(command);
+  }
   if (depth > MAX_DEPTH) {
+    work.capped = true;
     return WRITE_API_RE.test(command) || WRITE_CMD_RE.test(command) ? mentionsIn(command) : [];
   }
   const raw = dialect === "posix" ? blankMessageHeredocs(command) : command;
@@ -717,10 +727,20 @@ function targetsAt(
  * 64 KiB work budget every protected mention in the command counts as written.
  */
 export function shellWriteTargets(command: string, dialect: ShellDialect = "posix"): string[] {
+  return shellWriteScan(command, dialect).targets;
+}
+
+/** `shellWriteTargets` plus whether a cap or the work budget ended the precise read. */
+export function shellWriteScan(
+  command: string,
+  dialect: ShellDialect = "posix",
+): { targets: string[]; capped: boolean } {
+  const work: ScanWork = { used: 0, capped: false };
   try {
-    return targetsAt(command, dialect, 0, { used: 0 });
+    const targets = targetsAt(command, dialect, 0, work);
+    return { targets, capped: work.capped };
   } catch (e) {
-    if (e instanceof BudgetSpent) return capMentions(command);
+    if (e instanceof BudgetSpent) return { targets: capMentions(command), capped: true };
     throw e;
   }
 }
