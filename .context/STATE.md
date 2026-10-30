@@ -1,43 +1,43 @@
 ---
 id: state
 kind: state
-verified_at: "169f69267c2d"
+verified_at: "f719f064fc6e"
 source_paths: []
 generated_by: baton handoff
-generated_at: 2026-10-25T06:42:26.199Z
+generated_at: 2026-10-30T16:12:56.297Z
 reason: "manual"
 ---
 # State
 
-Last handoff: 2026-10-25T06:42:26.199Z (manual) at commit 169f69267c2d on branch worktree-build-all.
+Last handoff: 2026-10-30T16:12:56.297Z (manual) at commit f719f064fc6e on branch phase2-followups.
 
 ## Summary
 
 - Open epics: bt-kmz Phase 0 · Dogfood: capture the baseline; bt-s9g Phase 1 · MVP: freshness, mission packet, hook-made handoff, stats; bt-vyr Phase 2 · Gates: decide, verify, PreToolUse denies, compile (+1 more)
-- Recently closed: bt-vyr.17 Stamp Phase 2 sections and regenerate STATE.md (2026-10-25); bt-vyr.16 Phase 2 docs: command contract, hook wiring, roadmap, README (2026-10-24); bt-vyr.15 Skills call the real decide and verify (2026-10-24) (+2 more)
+- Recently closed: bt-bra Observe smoke:hooks green on ubuntu-latest CI (2026-10-30); bt-6yv Guard: charge the heredoc scanner to the work budget and cap its depth (2026-10-30); bt-9iu Remove the last wall-clock bounds from tests (2026-10-30) (+2 more)
 - Blocked: 1 (bt-jx6 by bt-vyr)
-- Working tree: 1 changed path(s); 1 file changed, 2 insertions(+), 2 deletions(-)
-- Last tool calls: Bash: npx (+4 args) | grep (+2 args) | head; Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md; Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md
+- Working tree: 3 changed path(s); 3 files changed, 5 insertions(+), 5 deletions(-)
+- Last tool calls: Edit .context/knowledge/harness-limits.md; Bash: cd (+1 args) && (assignment); (expression) | tail (+1 args); (expression) | tail…; Write …/pr-body.md
 
 ## In progress
 
-- bt-vyr.13 P2 Hook smoke test: Phase 2 cases and budgets (@NIGHTFURY609)
+- bt-u75 P1 PreToolUse config load misses the 150 ms budget: ordinary Edit 270 ms vs Bash 123 ms (@NIGHTFURY609)
 
 ## Ready next
 
 - bt-kmz.2 P1 Record baseline: tokens at session start, corrections, time to resume
-- bt-u75 P1 PreToolUse/PostToolUse over budget on Windows: pre-tool-use on repo 377 ms, preflight 404 ms
-- bt-bk4 P1 Shell summary tokenizer: honour escapes, cap scan, tighten allowlist
 - bt-kmz.3 P2 Snapshot Claude Code transcripts weekly (30-day deletion)
 - bt-kmz.5 P2 Settle stale thresholds per kind and whether the packet needs spec sections
+- bt-795 P2 Observe the exec-form SessionStart hook in a live Claude Code session on Windows
+- bt-vyr.18 P2 Measure the Phase 2 gate: no direct state edits in 10 sessions
 
 ## Recently closed
 
-- bt-vyr.17 Stamp Phase 2 sections and regenerate STATE.md (closed 2026-10-25: forced (check not run): verify check failed twice only on the known load-timing test verify-core runCheck kills the whole process tree on timeout (elapsed about 2.2 s vs 1500 ms limit); other 840 tests pass)
-- bt-vyr.16 Phase 2 docs: command contract, hook wiring, roadmap, README (closed 2026-10-24: forced (check not run): docs only; verify failed solely on load-timing tests: mission builds a second packet quickly, verify-core runCheck kills the whole process tree on timeout)
-- bt-vyr.15 Skills call the real decide and verify (closed 2026-10-24: verified: npm run check; npm run validate:skills)
-- bt-vyr.14 Generate this repo's AGENTS.md from rules.md, with compile --check in CI (closed 2026-10-24: forced (check not run): check run; known load-timing flakes: verify-core kills the whole process tree, explain-files afterAll hook timeout, third file in first run also a timing test; lint typecheck and dogfood and compile tests pass)
-- bt-vyr.4 compile and compile --check (the CI step lands with bt-vyr.14) (closed 2026-10-24: forced (check not run): npm run check via verify: only known load-timing flakes failed: mission builds a second packet quickly, verify-core kills the whole process tree, explain-files afterAll timeout; compile tests 11 of 11 pass)
+- bt-bra Observe smoke:hooks green on ubuntu-latest CI (closed 2026-10-30: Observed: npm run smoke:hooks green on ubuntu-latest and windows-latest in CI run 41084815009 (2026-10-30); recorded in implementation notes section 1.)
+- bt-6yv Guard: charge the heredoc scanner to the work budget and cap its depth (closed 2026-10-30: verified: npm run check)
+- bt-9iu Remove the last wall-clock bounds from tests (closed 2026-10-30: verified: npm run check)
+- bt-ipj explain-root test compares path spellings: Windows CI red since PR #1 (closed 2026-10-30: verified: npm run check)
+- bt-ubx Mission 'second packet quickly' test: wall-clock bound flakes in the full suite (closed 2026-10-25: verified: npm run check)
 
 ## Blocked
 
@@ -46,26 +46,31 @@ Last handoff: 2026-10-25T06:42:26.199Z (manual) at commit 169f69267c2d on branch
 ## Working tree
 
 ```text
+ M .context/decisions/0027-pretooluse-guards-a-guards-only-config-read-and-heredoc-scan.md
+ M .context/knowledge/harness-limits.md
  M .context/tasks.jsonl
 ```
 
 ## Diff stat
 
 ```text
- .context/tasks.jsonl | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
+ .context/decisions/0027-pretooluse-guards-a-guards-only-config-read-and-heredoc-scan.md | 2 +-
+ .context/knowledge/harness-limits.md                                                    | 2 +-
+ .context/tasks.jsonl                                                                    | 6 +++---
+ 3 files changed, 5 insertions(+), 5 deletions(-)
 ```
 
 ## Recent tool calls
 
-From session 0540676a-8bf9-41e5-b068-59631666ada2 (oldest first):
+From session bb499805-7da7-4de0-8121-3fff67350da4 (oldest first):
 
-- Bash: node (+4 args)
-- Agent: Review Phase 2 Task 5
-- Agent: Phase 2 Task 6: verify core
-- Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md
-- Bash: npx (+4 args) | grep (+2 args) | head; baton decide (+1 args) | tail (+1 args)
-- Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md
-- Bash: npx (+4 args) | grep (+2 args) | head
-- Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md
-- Edit .superpowers/sdd/2026-10-21-phase2-gates/progress.md
+- Edit .context/knowledge/harness-limits.md
+- Edit .context/knowledge/harness-limits.md
+- Edit docs/research/2026-10-16-implementation-notes.md
+- Bash: cd (+1 args) && grep (+11 args) | grep (+2 args) | cut (+1 args); baton verify-d…
+- Bash: cd (+1 args) && sed (+5 args) && baton decide (+3 args) | tail (+1 args); npx (+…
+- Read .context/knowledge/harness-limits.md
+- Bash: cd (+1 args) && baton task (+1 args) | grep (+2 args); baton task comment (+2 ar…
+- Edit .context/knowledge/harness-limits.md
+- Bash: cd (+1 args) && (assignment); (expression) | tail (+1 args); (expression) | tail…
+- Write …/pr-body.md
