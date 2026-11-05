@@ -53,6 +53,12 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
         ? { transcriptPath: input.transcript_path }
         : {}),
     });
+    // Only Claude Code transcripts are parsed by stats (ADR 0016); after the handoff, so a slow
+    // parse never costs the STATE.md write (ADR 0028).
+    if (ctx.harness === "claude" && typeof input.transcript_path === "string") {
+      const { snapshotSession } = await import("../core/stats.js");
+      await snapshotSession(ctx.root, input.transcript_path);
+    }
     return { kind: "noop" };
   };
 }
@@ -63,7 +69,8 @@ function handoffHandler(reasonOf: (input: HookInput) => string, tailBytes: numbe
  *
  * - session-start  -> mission packet as additionalContext; matcher includes
  *                     `compact` so the packet is re-injected after compaction  [Phase 1]
- * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md [Phase 1]
+ * - pre-compact    -> handoff (task store + git + transcript tail), writes STATE.md, then the
+ *                     session's stats snapshot (Claude Code only, ADR 0028)          [Phase 1]
  * - session-end    -> the same with a smaller tail; reason session-end[:<reason>] [Phase 1]
  * - pre-tool-use   -> deny direct edits to protected state (guards.ts, ADR 0027);
  *                     preflight context on dependency/migration files          [Phase 2]

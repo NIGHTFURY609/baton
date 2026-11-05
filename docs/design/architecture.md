@@ -89,8 +89,8 @@ Exit codes: `0` ok · `1` error · `2` check failed / blocked · `3` not impleme
 | baton event | Claude Code | Codex | Gemini CLI | Handler (phase) |
 |---|---|---|---|---|
 | `session-start` | SessionStart `startup\|resume\|clear\|compact` | SessionStart | SessionStart | inject `mission` output as `additionalContext` (1) |
-| `pre-compact` | PreCompact | PreCompact | PreCompress | full `handoff` (1) |
-| `session-end` | SessionEnd (timeout 10 s) | SessionEnd (≤ 3 s) | SessionEnd | fast deterministic `handoff` (1) |
+| `pre-compact` | PreCompact | PreCompact | PreCompress | full `handoff` (1), then the session's stats snapshot (Claude Code, ADR 0028) |
+| `session-end` | SessionEnd (timeout 10 s) | SessionEnd (≤ 3 s) | SessionEnd | fast deterministic `handoff` (1), then the session's stats snapshot (Claude Code, ADR 0028) |
 | `pre-tool-use` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|PowerShell` | PreToolUse `Bash\|apply_patch` | BeforeTool `write_file\|replace\|run_shell_command` | deny protected-state edits; preflight context for dependency and migration files (2, ADR 0027) |
 | `post-tool-use` | PostToolUse `Edit\|Write\|MultiEdit` | PostToolUse | AfterTool | notice the sections whose source_paths an edit touched; uncommitted changes age them (2, ADR 0021) |
 | `stop` | Stop (timeout 600 s; acts only with verify.onStop) | Stop | AfterAgent | run the active task's check; block the stop when it fails (2, ADR 0019) |

@@ -136,6 +136,39 @@ describe("runHook", () => {
     expect(stateOf(root)).toContain('reason: "session-end:logout"');
   });
 
+  // ADR 0028: the ending or compacting session keeps its stats past the transcript's deletion.
+  it.each([
+    ["session-end", "SessionEnd"],
+    ["pre-compact", "PreCompact"],
+  ] as const)("%s snapshots its own session's stats", async (event, name) => {
+    const root = stampedRepo();
+    const transcript = join(makeTempDir(), "abc-123.jsonl");
+    writeFileSync(transcript, toJsonl([toolUse("u1", "Bash", { command: "ls" })]));
+    const out = await runHook(
+      event,
+      "claude",
+      stdin({ hook_event_name: name, cwd: root, transcript_path: transcript }),
+    );
+    expect(out).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    const snap = JSON.parse(
+      readFileSync(join(root, ".context", ".cache", "stats", "abc-123.json"), "utf8"),
+    );
+    expect(snap).toMatchObject({ v: 1, sessionId: "abc-123" });
+  });
+
+  it("writes no snapshot for another harness or without a transcript", async () => {
+    const root = stampedRepo();
+    const transcript = join(makeTempDir(), "abc-123.jsonl");
+    writeFileSync(transcript, toJsonl([toolUse("u1", "Bash", { command: "ls" })]));
+    const input = { hook_event_name: "SessionEnd", cwd: root, transcript_path: transcript };
+    expect((await runHook("session-end", "codex", stdin(input))).exitCode).toBe(0);
+    expect(
+      (await runHook("session-end", "claude", stdin({ ...input, transcript_path: undefined })))
+        .exitCode,
+    ).toBe(0);
+    expect(existsSync(join(root, ".context", ".cache", "stats"))).toBe(false);
+  });
+
   it("fails open on bad input or mis-wiring", async () => {
     const bad = await runHook("session-start", "claude", Readable.from(["{not json"]));
     expect(bad.exitCode).toBe(0);

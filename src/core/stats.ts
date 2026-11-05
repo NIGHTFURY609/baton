@@ -355,6 +355,42 @@ async function readSnapshots(dir: string): Promise<SessionMetrics[]> {
   return out;
 }
 
+function metricsOf(
+  text: string,
+  sessionId: string,
+  root: string,
+  platform: NodeJS.Platform | undefined,
+): SessionMetrics {
+  const parsed = parseTranscript(text);
+  return sessionMetrics(parsed.records, {
+    sessionId,
+    root,
+    malformedLines: parsed.malformedLines,
+    ...(platform !== undefined ? { platform } : {}),
+  });
+}
+
+function writeSnapshot(statsDir: string, metrics: SessionMetrics): void {
+  writeFileAtomic(
+    join(statsDir, `${metrics.sessionId}.json`),
+    `${JSON.stringify(metrics, null, 2)}\n`,
+  );
+}
+
+/**
+ * Snapshot one session of this project from its transcript, as `collectStats` would, so its
+ * numbers outlive Claude Code's transcript cleanup (ADR 0028). For SessionEnd and PreCompact,
+ * which pass their own `transcript_path`; the caller checks that `.context/` exists.
+ */
+export async function snapshotSession(root: string, transcriptPath: string): Promise<void> {
+  const text = await readFile(transcriptPath, "utf8");
+  const sessionId = basename(transcriptPath, ".jsonl");
+  writeSnapshot(
+    contextPath(root, ContextPaths.cache, STATS_DIR),
+    metricsOf(text, sessionId, root, undefined),
+  );
+}
+
 /**
  * Metrics for every session of the project: parsed from transcripts (and
  * snapshotted when `.context/` exists), plus snapshots of sessions whose
@@ -388,21 +424,10 @@ export async function collectStats(root: string, opts: StatsOptions = {}): Promi
     } catch {
       throw new BatonError(`cannot read ${file.path}`);
     }
-    const parsed = parseTranscript(text);
-    const metrics = sessionMetrics(parsed.records, {
-      sessionId: file.sessionId,
-      root,
-      malformedLines: parsed.malformedLines,
-      ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
-    });
+    const metrics = metricsOf(text, file.sessionId, root, opts.platform);
     sessions.push(metrics);
     // --session names a foreign file: snapshotting it would skew this project's stats for good.
-    if (hasContext && !opts.sessionPath) {
-      writeFileAtomic(
-        join(statsDir, `${file.sessionId}.json`),
-        `${JSON.stringify(metrics, null, 2)}\n`,
-      );
-    }
+    if (hasContext && !opts.sessionPath) writeSnapshot(statsDir, metrics);
   }
 
   if (!opts.sessionPath) {
