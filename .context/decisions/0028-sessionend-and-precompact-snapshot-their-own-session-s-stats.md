@@ -4,7 +4,7 @@ kind: decision
 status: accepted
 date: 2026-11-06
 decision-makers: [NIGHTFURY609]
-verified_at: "64539ae13adb"
+verified_at: "90e720facfcf"
 source_paths: ["src/hooks/dispatch.ts", "src/core/stats.ts"]
 spec_sections: [measurement, hooks]
 ---
