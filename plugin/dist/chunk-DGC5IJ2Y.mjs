@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+import { createRequire as __batonCreateRequire } from "node:module";
+const require = __batonCreateRequire(import.meta.url);
+
+// package.json
+var package_default = {
+  name: "baton-ctx",
+  version: "0.1.0",
+  description: "Continuity layer for coding agents: every session starts with the smallest fresh brief, and nothing stale reaches the model.",
+  type: "module",
+  license: "MIT",
+  author: "NIGHTFURY609",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/NIGHTFURY609/baton.git"
+  },
+  homepage: "https://github.com/NIGHTFURY609/baton#readme",
+  bugs: {
+    url: "https://github.com/NIGHTFURY609/baton/issues"
+  },
+  keywords: ["coding-agents", "context", "continuity", "handoff", "hooks", "memory", "task-store"],
+  bin: {
+    baton: "dist/baton.mjs"
+  },
+  files: [
+    "THIRD_PARTY_NOTICES.md",
+    "dist",
+    "templates",
+    "plugin"
+  ],
+  engines: {
+    node: ">=22.13"
+  },
+  scripts: {
+    build: "node scripts/embed-templates.mjs && tsup && node scripts/sync-plugin.mjs",
+    "embed:templates": "node scripts/embed-templates.mjs",
+    dev: "tsup --watch",
+    baton: "node dist/baton.mjs",
+    typecheck: "tsc --noEmit",
+    lint: "biome check .",
+    format: "biome check --write .",
+    test: "vitest run",
+    "test:watch": "vitest",
+    check: "npm run lint && npm run typecheck && npm run test",
+    "validate:skills": "node scripts/validate-skills.mjs",
+    "smoke:hooks": "node scripts/hook-smoke.mjs"
+  },
+  dependencies: {
+    "@modelcontextprotocol/server": "^2.3.1",
+    commander: "^15.0.0",
+    yaml: "^2.9.1",
+    zod: "^4.6.7"
+  },
+  devDependencies: {
+    "@biomejs/biome": "^2.5.15",
+    "@types/node": "^22.0.0",
+    tsup: "^9.0.0",
+    typescript: "^5.9.0",
+    vitest: "^5.0.5"
+  }
+};
+
+export {
+  package_default
+};
+//# sourceMappingURL=chunk-DGC5IJ2Y.mjs.map

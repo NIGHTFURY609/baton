@@ -1,12 +1,13 @@
 {
-  "name": "baton-dev",
-  "owner": { "name": "baton maintainers" },
-  "description": "Local development marketplace for the baton plugin.",
+  "name": "baton",
+  "owner": { "name": "NIGHTFURY609", "url": "https://github.com/NIGHTFURY609" },
+  "description": "The baton plugin: continuity layer for coding agents.",
   "plugins": [
     {
       "name": "baton",
       "source": "./plugin",
-      "description": "Continuity layer for coding agents."
+      "description": "Continuity layer for coding agents.",
+      "version": "0.1.0"
     }
   ]
 }

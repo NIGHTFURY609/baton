@@ -1,0 +1,293 @@
+#!/usr/bin/env node
+import { createRequire as __batonCreateRequire } from "node:module";
+const require = __batonCreateRequire(import.meta.url);
+import {
+  PACKET_HEADER,
+  evaluateFreshness,
+  fitToBudget,
+  isInjectable
+} from "./chunk-TUW6WTQN.mjs";
+import {
+  loadSectionIndex
+} from "./chunk-3GYDKCE7.mjs";
+import {
+  getTask,
+  readTaskSnapshot
+} from "./chunk-6V7F4CRM.mjs";
+import {
+  BatonError
+} from "./chunk-YXJRO53B.mjs";
+import {
+  writeFileAtomic
+} from "./chunk-QYQVMIUC.mjs";
+import {
+  contextPath
+} from "./chunk-HVIRJWHJ.mjs";
+
+// src/core/mission.ts
+import { basename } from "path";
+var DROPPED_RESERVE = 100;
+var PACKET_PRIORITY = {
+  state: 0,
+  tasks: 1,
+  freshness: 2,
+  spec: 3,
+  decision: 4,
+  memory: 5,
+  pointers: 6
+};
+function stateHead(body) {
+  const lines = body.split("\n");
+  if (lines[0]?.startsWith("# ")) lines.shift();
+  const kept = [];
+  let h2 = 0;
+  for (const line of lines) {
+    if (line.startsWith("## ") && ++h2 === 2) break;
+    kept.push(line);
+  }
+  return kept.join("\n").trim();
+}
+function header(inputs) {
+  const head = inputs.head === null ? "none" : inputs.head.slice(0, 12);
+  return `${PACKET_HEADER}
+Project ${inputs.project} at commit ${head}, generated ${inputs.generatedAt}. Facts below come from .context/, the task store and git.`;
+}
+function stateBlock(inputs) {
+  const sf = inputs.sections.find((s) => s.section.doc === "state");
+  if (!sf || !isInjectable(sf.result.level)) return void 0;
+  const head = stateHead(sf.section.body);
+  if (head === "") return void 0;
+  const n = sf.commitsOutsideContext;
+  const first = n === null || n === 0 ? "State (from .context/STATE.md):" : `State (from .context/STATE.md; ${n} commit(s) outside .context/ since it was generated):`;
+  return { key: "state", priority: PACKET_PRIORITY.state, text: `${first}
+${head}` };
+}
+function firstLine(text) {
+  return text.split("\n").map((l) => l.trim()).find((l) => l !== "");
+}
+function taskBlock(task) {
+  const meta = [
+    ...task.priority === void 0 ? [] : [`P${task.priority}`],
+    task.status.replaceAll("_", " "),
+    ...task.assignee ? [`@${task.assignee}`] : []
+  ].join(", ");
+  const lines = [`Task ${task.id} (${meta}): ${task.title}`];
+  if (task.specSections.length > 0) lines.push(`  spec sections: ${task.specSections.join(", ")}`);
+  if (task.checkCommand) lines.push(`  check: ${task.checkCommand}`);
+  const desc = task.description === void 0 ? void 0 : firstLine(task.description);
+  if (desc !== void 0) {
+    lines.push(`  description: ${desc.length > 200 ? `${desc.slice(0, 200)}\u2026` : desc}`);
+  }
+  return { key: `task:${task.id}`, priority: PACKET_PRIORITY.tasks, text: lines.join("\n") };
+}
+function taskBlocks(tasks) {
+  if (tasks.length === 0) {
+    return [
+      {
+        key: "tasks",
+        priority: PACKET_PRIORITY.tasks,
+        text: "No tasks are in progress or ready in the task store."
+      }
+    ];
+  }
+  return tasks.map(taskBlock);
+}
+function freshnessBlock(inputs, unknownIds) {
+  const at = (level) => inputs.sections.filter((s) => s.result.level === level);
+  const withReason = (list) => list.map((s) => `${s.section.meta.id} (${s.result.reason})`).join("; ");
+  const aging = at("aging");
+  const stale = at("stale");
+  const unverified = at("unverified");
+  const superseded = at("superseded");
+  if (aging.length + stale.length + unverified.length + superseded.length === 0 && unknownIds.length === 0 && inputs.problems.length === 0) {
+    return void 0;
+  }
+  const fresh = at("fresh");
+  const lines = [
+    `Freshness of .context/: ${fresh.length} fresh, ${aging.length} aging, ${stale.length} stale, ${unverified.length} unverified, ${superseded.length} superseded.`
+  ];
+  if (aging.length > 0) lines.push(`Aging: ${withReason(aging)}.`);
+  if (stale.length > 0) lines.push(`Withheld as stale: ${withReason(stale)}.`);
+  if (unverified.length > 0) {
+    lines.push(`Withheld as unverified: ${unverified.map((s) => s.section.meta.id).join(", ")}.`);
+  }
+  if (superseded.length > 0) {
+    const items = superseded.map(
+      (s) => s.section.meta.supersededBy === void 0 ? s.section.meta.id : `${s.section.meta.id} (by ${s.section.meta.supersededBy})`
+    );
+    lines.push(`Superseded: ${items.join(", ")}.`);
+  }
+  if (unknownIds.length > 0) {
+    lines.push(`Task labels name unknown sections: ${unknownIds.join(", ")}.`);
+  }
+  if (inputs.problems.length > 0) {
+    lines.push(
+      `Problems in .context/ (affected sections skipped): ${inputs.problems.map((p) => p.message).join("; ")}.`
+    );
+  }
+  if (stale.length + unverified.length > 0) {
+    lines.push("baton verify-doc <id> records a section as verified at HEAD after review.");
+  }
+  return { key: "freshness", priority: PACKET_PRIORITY.freshness, text: lines.join("\n") };
+}
+function specBlock(sf) {
+  const { section, result } = sf;
+  const label = section.doc === "spec" ? "Spec section" : "Section";
+  const fresh = result.level === "aging" ? `aging: ${result.reason}` : "fresh";
+  return {
+    key: `spec:${section.meta.id}`,
+    priority: PACKET_PRIORITY.spec,
+    text: `${label} "${section.title}" (${section.meta.id}, ${section.file}:${section.line}, ${fresh}):
+${section.body}`
+  };
+}
+function buildBlocks(inputs) {
+  const blocks = [];
+  const state = stateBlock(inputs);
+  if (state) blocks.push(state);
+  blocks.push(...taskBlocks(inputs.tasks));
+  const byId = new Map(inputs.sections.map((s) => [s.section.meta.id, s]));
+  const specIds = [...new Set(inputs.tasks.flatMap((t) => t.specSections))];
+  const unknownIds = specIds.filter((id) => {
+    const sf = byId.get(id);
+    return sf === void 0 || sf.section.doc === "decision";
+  });
+  const freshness = freshnessBlock(inputs, unknownIds);
+  if (freshness) blocks.push(freshness);
+  for (const id of specIds) {
+    const sf = byId.get(id);
+    if (sf && sf.section.doc !== "decision" && isInjectable(sf.result.level)) {
+      blocks.push(specBlock(sf));
+    }
+  }
+  const specSet = new Set(specIds);
+  const adrs = [];
+  for (const sf of inputs.sections) {
+    const adr = sf.section.adr;
+    if (sf.section.doc !== "decision" || !adr || !isInjectable(sf.result.level)) continue;
+    if (!adr.status.toLowerCase().startsWith("accepted")) continue;
+    if (adr.specSections.some((id) => specSet.has(id))) adrs.push({ sf, adr });
+  }
+  adrs.sort((a, b) => a.adr.number - b.adr.number);
+  for (const { sf, adr } of adrs) {
+    blocks.push({
+      key: `adr:${sf.section.meta.id}`,
+      priority: PACKET_PRIORITY.decision,
+      text: `Decision ADR ${String(adr.number).padStart(4, "0")} (${adr.status}): ${sf.section.title} (${sf.section.file})`
+    });
+  }
+  for (const m of inputs.memories) {
+    blocks.push({
+      key: `memory:${m.key}`,
+      priority: PACKET_PRIORITY.memory,
+      text: `Memory ${m.key}: ${m.value}`
+    });
+  }
+  const topics = inputs.sections.filter((s) => s.section.doc === "knowledge").map((s) => s.section.meta.id);
+  blocks.push({
+    key: "pointers",
+    priority: PACKET_PRIORITY.pointers,
+    text: `More context on demand: .context/spec.md, .context/decisions/, .context/knowledge/ (topics: ${topics.length > 0 ? topics.join(", ") : "none"}). baton mission --task <id> prints the brief for one task.`
+  });
+  return blocks;
+}
+function assemblePacket(inputs, maxChars) {
+  const head = header(inputs);
+  const min = head.length + 2 + DROPPED_RESERVE;
+  if (maxChars < min) {
+    throw new BatonError(`budget ${maxChars} is too small (minimum ${min})`);
+  }
+  const blocks = buildBlocks(inputs).map((b, i) => ({ b, i })).sort((x, y) => x.b.priority - y.b.priority || x.i - y.i).map(({ b }) => b);
+  const fit = fitToBudget(blocks, maxChars - head.length - 2 - DROPPED_RESERVE);
+  const parts = [head, ...fit.kept.map((b) => b.text)];
+  if (fit.dropped.length > 0) {
+    parts.push(
+      `Left out for space: ${fit.dropped.length} block(s); baton mission --format json lists them.`
+    );
+  }
+  const text = parts.join("\n\n");
+  if (text.length > maxChars) throw new Error("packet over budget");
+  const keptKeys = new Set(fit.kept.map((b) => b.key));
+  const withheld = [];
+  for (const s of inputs.sections) {
+    const level = s.result.level;
+    if (level === "stale" || level === "unverified" || level === "superseded") {
+      withheld.push({ id: s.section.meta.id, level, reason: s.result.reason });
+    }
+  }
+  return {
+    text,
+    chars: text.length,
+    maxChars,
+    blocks: blocks.map((b) => ({
+      key: b.key,
+      priority: b.priority,
+      chars: b.text.length,
+      kept: keptKeys.has(b.key)
+    })),
+    withheld,
+    taskIds: inputs.tasks.map((t) => t.id)
+  };
+}
+async function buildMission(root, config, opts = {}) {
+  const index = await loadSectionIndex(root, { lenient: true });
+  const [report, snapshot] = await Promise.all([
+    evaluateFreshness(index, config),
+    readTaskSnapshot(root, config, { readyLimit: config.packet.maxTasks, closedLimit: 0 })
+  ]);
+  let tasks;
+  if (opts.taskId !== void 0) {
+    const task = await getTask(root, config, opts.taskId);
+    if (task === null) throw new BatonError(`no task ${opts.taskId}`);
+    tasks = [task];
+  } else {
+    const seen = /* @__PURE__ */ new Set();
+    tasks = [];
+    for (const t of [...snapshot.inProgress, ...snapshot.ready]) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      tasks.push(t);
+    }
+    tasks = tasks.slice(0, config.packet.maxTasks);
+  }
+  return assemblePacket(
+    {
+      project: basename(root),
+      head: report.head,
+      generatedAt: (opts.now ?? /* @__PURE__ */ new Date()).toISOString(),
+      sections: report.sections,
+      problems: index.problems,
+      tasks,
+      memories: snapshot.memories
+    },
+    opts.maxChars ?? config.packet.maxChars
+  );
+}
+async function writePacketCache(root, result) {
+  writeFileAtomic(contextPath(root, ".cache", "last-packet.txt"), result.text);
+  writeFileAtomic(
+    contextPath(root, ".cache", "last-packet.json"),
+    `${JSON.stringify(result, null, 2)}
+`
+  );
+}
+function parseBudget(value, fallback) {
+  if (value === void 0) return fallback;
+  const n = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 1e4) {
+    throw new BatonError("budget must be an integer from 1 to 10000");
+  }
+  return n;
+}
+
+export {
+  DROPPED_RESERVE,
+  PACKET_PRIORITY,
+  stateHead,
+  buildBlocks,
+  assemblePacket,
+  buildMission,
+  writePacketCache,
+  parseBudget
+};
+//# sourceMappingURL=chunk-FVM2XUEA.mjs.map

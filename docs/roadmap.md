@@ -1,6 +1,6 @@
 # Roadmap
 
-Four phases, about 13 weeks, each gated on a measured result. Nothing ships before the dogfood numbers hold.
+Four phases, about 13 weeks, each gated on a measured result. 0.1.0 ships as an alpha before the dogfood gates close: the gates are measured on real use after release, and a gate that fails still stops the phase that follows it.
 
 ![roadmap](research/media/roadmap.png)
 

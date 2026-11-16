@@ -2,7 +2,33 @@
 
 **A continuity layer for coding agents.** Every session starts with the smallest fresh brief, and nothing stale reaches the model.
 
-> Status: **pre-alpha.** Phases 1–2 are built: mission packet, handoff, drift, stats, init, decide, verify, compile and the hook guards, plus the task store and `baton explain` (also as `/baton explain`). Their dogfood gates are still being measured. See [docs/roadmap.md](docs/roadmap.md).
+> Status: **alpha (0.1.0).** Phases 1–2 are built: mission packet, handoff, drift, stats, init, decide, verify, compile and the hook guards, plus the task store and `baton explain` (also as `/baton explain`). Their dogfood gates are measured on real use after release. Not yet built (exit 3): the MCP adapter and `init --harness codex|gemini`. See [docs/roadmap.md](docs/roadmap.md).
+
+## Install
+
+Requires Node 22.13+ and git.
+
+```bash
+npm install -g baton-ctx      # the baton CLI
+cd your-project
+baton init                    # scaffolds .context/, AGENTS.md and CLAUDE.md
+```
+
+Then add the Claude Code plugin (hooks and skills):
+
+```text
+/plugin marketplace add NIGHTFURY609/baton
+/plugin install baton@baton
+```
+
+In a project with a `.context/`, SessionStart injects the mission brief, PreCompact and SessionEnd rewrite `.context/STATE.md`, and PreToolUse blocks direct edits to the state files. In any other folder the hooks do nothing. Everyday use:
+
+```bash
+baton task ready          # what to work on next
+baton mission             # the brief an agent sees at session start
+baton verify <id>         # run a task's check and close it on success
+baton stats               # tokens at session start, corrections, drift
+```
 
 ## Why
 
@@ -39,12 +65,14 @@ npm run build          # dist/baton.mjs, copied into plugin/dist/
 node dist/baton.mjs --help
 ```
 
-Try the plugin in Claude Code. In a project that has a `.context/`, SessionStart injects the mission packet, and PreCompact and SessionEnd **rewrite `.context/STATE.md`** (the committed handoff). Anywhere else, including your home folder, the hooks do nothing. The PreToolUse, PostToolUse and Stop hooks stay no-ops until Phase 2:
+Try a local build of the plugin in Claude Code. In a project that has a `.context/`, SessionStart injects the mission packet, PreCompact and SessionEnd **rewrite `.context/STATE.md`** (the committed handoff), PreToolUse denies direct edits to protected state, PostToolUse marks touched sections aging, and Stop runs the active task's check when `verify.onStop` is set. Anywhere else, including your home folder, the hooks do nothing:
 
 ```bash
 claude --plugin-dir ./plugin
-# or: /plugin marketplace add ./   then   /plugin install baton@baton-dev
+# or: /plugin marketplace add ./   then   /plugin install baton@baton
 ```
+
+`plugin/dist/` is committed, because a marketplace install copies only `plugin/`. Run `npm run build` and commit `plugin/dist/` whenever `src/` changes.
 
 ### Tasks
 
@@ -72,9 +100,9 @@ Tasks live in `.context/tasks.jsonl` (committed); a SQLite index in `.context/.c
 
 ### First steps after cloning
 
-1. `git init && git add -A && git commit -m "Scaffold baton"`.
-2. `npm run build`, then `node dist/baton.mjs task ready` — the Phase 0 and Phase 1 backlog is already in `.context/tasks.jsonl`.
-3. Start the Phase 0 baseline in [docs/roadmap.md](docs/roadmap.md).
+1. `npm install && npm run build`.
+2. `node dist/baton.mjs task ready`: the open backlog is in `.context/tasks.jsonl`.
+3. Read [docs/roadmap.md](docs/roadmap.md) for the current phase and its gate.
 
 ## License
 

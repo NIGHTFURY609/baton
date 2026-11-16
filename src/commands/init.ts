@@ -38,7 +38,7 @@ export function registerInit(program: Command): void {
         }
         if (o.hooks && harnesses.includes("claude")) {
           process.stdout.write(
-            "hooks: Claude Code hooks ship with the baton plugin (plugin/hooks/hooks.json); load it with claude --plugin-dir <baton>/plugin or /plugin install baton@baton-dev\n",
+            "hooks: Claude Code hooks ship with the baton plugin (plugin/hooks/hooks.json); install it with /plugin marketplace add NIGHTFURY609/baton then /plugin install baton@baton\n",
           );
         }
       }),

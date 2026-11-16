@@ -1,11 +1,14 @@
 {
   "name": "baton",
   "displayName": "baton",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Continuity layer for coding agents: a budgeted, freshness-checked brief at session start and hook-generated handoffs.",
   "license": "MIT",
   "keywords": ["memory", "continuity", "handoff", "context", "hooks"],
   "author": {
-    "name": "baton maintainers"
-  }
+    "name": "NIGHTFURY609",
+    "url": "https://github.com/NIGHTFURY609"
+  },
+  "homepage": "https://github.com/NIGHTFURY609/baton",
+  "repository": "https://github.com/NIGHTFURY609/baton"
 }

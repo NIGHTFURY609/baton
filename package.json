@@ -1,10 +1,27 @@
 {
   "name": "baton-ctx",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Continuity layer for coding agents: every session starts with the smallest fresh brief, and nothing stale reaches the model.",
   "type": "module",
   "license": "MIT",
-  "private": true,
+  "author": "NIGHTFURY609",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NIGHTFURY609/baton.git"
+  },
+  "homepage": "https://github.com/NIGHTFURY609/baton#readme",
+  "bugs": {
+    "url": "https://github.com/NIGHTFURY609/baton/issues"
+  },
+  "keywords": [
+    "coding-agents",
+    "context",
+    "continuity",
+    "handoff",
+    "hooks",
+    "memory",
+    "task-store"
+  ],
   "bin": {
     "baton": "dist/baton.mjs"
   },

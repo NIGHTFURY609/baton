@@ -1,6 +1,7 @@
 node_modules/
-dist/
-plugin/dist/
+/dist/
+# plugin/dist/ is committed: a marketplace install copies only plugin/ (ADR 0017),
+# so the hooks need the built CLI there. Rebuild with npm run build before a release.
 coverage/
 *.log
 .DS_Store
