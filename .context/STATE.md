@@ -1,28 +1,27 @@
 ---
 id: state
 kind: state
-verified_at: "8960b553bc2a"
+verified_at: "fb07680b5429"
 source_paths: []
 generated_by: baton handoff
-generated_at: 2026-11-05T21:59:48.999Z
-reason: "session-end:other"
+generated_at: 2026-11-16T18:26:22.083Z
+reason: "manual"
 ---
 # State
 
-Last handoff: 2026-11-05T21:59:48.999Z (session-end:other) at commit 8960b553bc2a on branch transcript-snapshots.
+Last handoff: 2026-11-16T18:26:22.083Z (manual) at commit fb07680b5429 on branch transcript-snapshots.
 
 ## Summary
 
 - Open epics: bt-kmz Phase 0 · Dogfood: capture the baseline; bt-s9g Phase 1 · MVP: freshness, mission packet, hook-made handoff, stats; bt-vyr Phase 2 · Gates: decide, verify, PreToolUse denies, compile (+1 more)
-- Recently closed: bt-w2a Observe bare /baton resolution in Claude Code (manual, interactive) (2026-11-05); bt-795 Observe the exec-form SessionStart hook in a live Claude Code session on Windows (2026-11-05); bt-bra Observe smoke:hooks green on ubuntu-latest CI (2026-10-30) (+2 more)
+- Recently closed: bt-u75 PreToolUse config load misses the 150 ms budget: ordinary Edit 270 ms vs Bash 123 ms (2026-11-16); bt-kmz.3 Snapshot Claude Code transcripts weekly (30-day deletion) (2026-11-16); bt-w2a Observe bare /baton resolution in Claude Code (manual, interactive) (2026-11-05) (+2 more)
 - Blocked: 1 (bt-jx6 by bt-vyr)
-- Working tree: 4 changed path(s)
-- Last tool calls: none recorded
+- Working tree: 9 changed path(s); 8 files changed, 71 insertions(+), 21 deletions(-)
+- Last tool calls: PowerShell: npx (+5 args) | Select-Object (+2 args); npm run check (+1 args) | Select-Object…; PowerShell: npm (+3 args) | Select-String (+2 args); (expression); git status (+1 args) | Se…; PowerShell: baton handoff; git add (+2 args); git commit (+3 args); (expression)
 
 ## In progress
 
-- bt-u75 P1 PreToolUse config load misses the 150 ms budget: ordinary Edit 270 ms vs Bash 123 ms (@NIGHTFURY609)
-- bt-kmz.3 P2 Snapshot Claude Code transcripts weekly (30-day deletion) (@NIGHTFURY609)
+- none
 
 ## Ready next
 
@@ -34,11 +33,11 @@ Last handoff: 2026-11-05T21:59:48.999Z (session-end:other) at commit 8960b553bc2
 
 ## Recently closed
 
+- bt-u75 PreToolUse config load misses the 150 ms budget: ordinary Edit 270 ms vs Bash 123 ms (closed 2026-11-16: Under budget on an idle CPU after ADR 0027: in-repo Edit 92 ms, deny 85-98, preflight 98-104 vs 150 (hook-smoke --strict-timing, 2026-11-16). post-tool-use on this repo is 141 ms, the tightest row.)
+- bt-kmz.3 Snapshot Claude Code transcripts weekly (30-day deletion) (closed 2026-11-16: verified: npm run check)
 - bt-w2a Observe bare /baton resolution in Claude Code (manual, interactive) (closed 2026-11-05: Observed 2026-11-06 (Claude Code 2.1.310, --plugin-dir, Windows): /baton task ready ran the plugin skill, recorded as /baton:baton with args task ready; baton task ready exit 0. Recorded in implementation notes section 2.)
 - bt-795 Observe the exec-form SessionStart hook in a live Claude Code session on Windows (closed 2026-11-05: Live session 2026-11-06 (Claude Code 2.1.310, --plugin-dir, Windows 11, project roblox): SessionStart exec form exit 0 with the brief injected; Edit of .context/STATE.md denied twice, one guard.jsonl deny line; SessionEnd regenerated STATE.md. Recorded in implementation notes section 1.)
 - bt-bra Observe smoke:hooks green on ubuntu-latest CI (closed 2026-10-30: Observed: npm run smoke:hooks green on ubuntu-latest and windows-latest in CI run 41084815009 (2026-10-30); recorded in implementation notes section 1.)
-- bt-6yv Guard: charge the heredoc scanner to the work budget and cap its depth (closed 2026-10-30: verified: npm run check)
-- bt-9iu Remove the last wall-clock bounds from tests (closed 2026-10-30: verified: npm run check)
 
 ## Blocked
 
@@ -47,16 +46,42 @@ Last handoff: 2026-11-05T21:59:48.999Z (session-end:other) at commit 8960b553bc2
 ## Working tree
 
 ```text
-?? .context/decisions/0000-template.md
-?? .context/knowledge/README.md
-?? rubbish-1.txt
-?? rubbish-2.md
+ M .claude-plugin/marketplace.json
+ M .context/tasks.jsonl
+ M .gitignore
+ M README.md
+ M docs/roadmap.md
+ M package.json
+ M plugin/.claude-plugin/plugin.json
+ M src/commands/init.ts
+?? plugin/dist/
 ```
 
 ## Diff stat
 
-- no changes against HEAD
+```text
+ .claude-plugin/marketplace.json   |  9 +++++----
+ .context/tasks.jsonl              |  4 ++--
+ .gitignore                        |  5 +++--
+ README.md                         | 40 ++++++++++++++++++++++++++++++++++------
+ docs/roadmap.md                   |  2 +-
+ package.json                      | 21 +++++++++++++++++++--
+ plugin/.claude-plugin/plugin.json |  9 ++++++---
+ src/commands/init.ts              |  2 +-
+ 8 files changed, 71 insertions(+), 21 deletions(-)
+```
 
 ## Recent tool calls
 
-- none recorded
+From session ab759184-52b5-4f12-bd04-675f81cd5fca (oldest first):
+
+- Edit .gitignore
+- Edit docs/roadmap.md
+- Edit README.md
+- Edit README.md
+- Edit README.md
+- PowerShell: npm run build (+1 args) | Select-Object (+2 args); baton (+1 args); baton (+1 ar…
+- PowerShell: npx (+4 args) | Select-String (+2 args) | ForEach-Object (+1 args) | Group-Objec… (failed)
+- PowerShell: npx (+5 args) | Select-Object (+2 args); npm run check (+1 args) | Select-Object…
+- PowerShell: npm (+3 args) | Select-String (+2 args); (expression); git status (+1 args) | Se…
+- PowerShell: baton handoff; git add (+2 args); git commit (+3 args); (expression)
